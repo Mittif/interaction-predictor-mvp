@@ -1,0 +1,28 @@
+[project]
+name = "interaction-predictor"
+version = "0.1.0"
+description = "MVP camera scene and interest-object interaction prediction module."
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110",
+  "httpx>=0.27",
+  "numpy>=1.24",
+  "opencv-python>=4.8",
+  "pydantic>=2.6",
+  "ultralytics>=8.2",
+  "uvicorn[standard]>=0.27",
+]
+
+[project.scripts]
+interaction-predictor = "interaction_predictor.main:cli"
+
+[tool.setuptools.packages.find]
+include = ["interaction_predictor*"]
+exclude = ["data*", "runs*"]
+
+[tool.setuptools.package-data]
+interaction_predictor = ["web/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

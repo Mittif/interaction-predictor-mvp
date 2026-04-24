@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interaction Predictor Console</title>
+    <link rel="stylesheet" href="/ui/styles.css?v=3" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Interaction Predictor</p>
+          <h1>场景交互预测控制台</h1>
+        </div>
+        <div class="toolbar" aria-label="全局操作">
+          <button class="icon-button" id="refreshAll" title="刷新全部接口">
+            <span aria-hidden="true">R</span>
+            <span>刷新</span>
+          </button>
+          <label class="toggle">
+            <input id="autoRefresh" type="checkbox" checked />
+            <span>自动刷新</span>
+          </label>
+        </div>
+      </header>
+
+      <section class="status-grid" aria-label="运行状态">
+        <article class="status-card">
+          <span class="status-label">Camera</span>
+          <strong id="cameraStatus">pending</strong>
+          <small id="cameraDetail">-</small>
+        </article>
+        <article class="status-card">
+          <span class="status-label">YOLO</span>
+          <strong id="yoloStatus">pending</strong>
+          <small id="yoloDetail">-</small>
+        </article>
+        <article class="status-card">
+          <span class="status-label">Scene</span>
+          <strong id="sceneStatus">pending</strong>
+          <small id="sceneDetail">-</small>
+        </article>
+        <article class="status-card">
+          <span class="status-label">Prediction</span>
+          <strong id="predictionStatus">pending</strong>
+          <small id="predictionDetail">-</small>
+        </article>
+      </section>
+
+      <section class="workspace">
+        <article class="panel snapshot-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Snapshot</p>
+              <h2>摄像头画面</h2>
+            </div>
+            <button class="icon-button compact" data-endpoint="/snapshot" id="snapshotButton" title="刷新快照">
+              <span aria-hidden="true">S</span>
+              <span>快照</span>
+            </button>
+          </div>
+          <div class="source-controls" aria-label="摄像头输入源">
+            <select id="cameraSourceSelect" aria-label="选择摄像头或测试视频">
+              <option value="">检测输入源中...</option>
+            </select>
+            <button class="icon-button compact" id="refreshSources" title="重新检测本机摄像头和测试视频">
+              <span aria-hidden="true">D</span>
+              <span>检测</span>
+            </button>
+            <button class="icon-button compact" id="switchSource" title="切换到选中的输入源">
+              <span aria-hidden="true">C</span>
+              <span>切换</span>
+            </button>
+            <small id="cameraSourceMeta">-</small>
+          </div>
+          <div class="snapshot-frame">
+            <img id="snapshot" alt="camera snapshot" />
+            <div id="snapshotEmpty" class="empty">等待摄像头帧</div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Latest</p>
+              <h2>最新预测</h2>
+            </div>
+            <button class="icon-button compact" data-json="/latest-prediction" title="刷新最新预测">
+              <span aria-hidden="true">P</span>
+              <span>预测</span>
+            </button>
+          </div>
+          <div id="predictionSummary" class="prediction-list"></div>
+        </article>
+      </section>
+
+      <section class="data-grid" aria-label="接口结果">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">GET /health</p>
+              <h2>健康检查</h2>
+            </div>
+            <button class="icon-button compact" data-json="/health" title="测试健康检查">
+              <span aria-hidden="true">H</span>
+              <span>测试</span>
+            </button>
+          </div>
+          <pre id="healthJson" class="json-view">{}</pre>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">GET /latest-scene</p>
+              <h2>最新场景</h2>
+            </div>
+            <button class="icon-button compact" data-json="/latest-scene" title="测试最新场景">
+              <span aria-hidden="true">G</span>
+              <span>测试</span>
+            </button>
+          </div>
+          <pre id="sceneJson" class="json-view">{}</pre>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">GET /latest-interest-object</p>
+              <h2>中心兴趣物</h2>
+            </div>
+            <button class="icon-button compact" data-json="/latest-interest-object" title="测试中心兴趣物">
+              <span aria-hidden="true">O</span>
+              <span>测试</span>
+            </button>
+          </div>
+          <pre id="objectJson" class="json-view">{}</pre>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">GET /latest-prediction</p>
+              <h2>预测 JSON</h2>
+            </div>
+            <button class="icon-button compact" data-json="/latest-prediction" title="测试预测 JSON">
+              <span aria-hidden="true">P</span>
+              <span>测试</span>
+            </button>
+          </div>
+          <pre id="predictionJson" class="json-view">{}</pre>
+        </article>
+      </section>
+
+      <section class="panel tester">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">API Runner</p>
+            <h2>接口测试</h2>
+          </div>
+          <div class="runner-controls">
+            <select id="endpointSelect" aria-label="选择接口">
+              <option value="/health">GET /health</option>
+              <option value="/camera/sources">GET /camera/sources</option>
+              <option value="/camera/source">GET /camera/source</option>
+              <option value="/latest-scene">GET /latest-scene</option>
+              <option value="/latest-interest-object">GET /latest-interest-object</option>
+              <option value="/latest-prediction">GET /latest-prediction</option>
+              <option value="/history/scenes?limit=20">GET /history/scenes?limit=20</option>
+              <option value="/history/predictions?limit=20">GET /history/predictions?limit=20</option>
+              <option value="/snapshot">GET /snapshot</option>
+            </select>
+            <button class="icon-button" id="runEndpoint" title="执行接口">
+              <span aria-hidden="true">▶</span>
+              <span>执行</span>
+            </button>
+          </div>
+        </div>
+        <div class="runner-meta" id="runnerMeta">idle</div>
+        <pre id="runnerJson" class="json-view tall">{}</pre>
+      </section>
+
+      <section class="history-grid" aria-label="历史数据">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">GET /history/scenes</p>
+              <h2>场景历史</h2>
+            </div>
+            <button class="icon-button compact" data-json="/history/scenes?limit=20" title="刷新场景历史">
+              <span aria-hidden="true">L</span>
+              <span>历史</span>
+            </button>
+          </div>
+          <pre id="sceneHistoryJson" class="json-view tall">{}</pre>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">GET /history/predictions</p>
+              <h2>预测历史</h2>
+            </div>
+            <button class="icon-button compact" data-json="/history/predictions?limit=20" title="刷新预测历史">
+              <span aria-hidden="true">L</span>
+              <span>历史</span>
+            </button>
+          </div>
+          <pre id="predictionHistoryJson" class="json-view tall">{}</pre>
+        </article>
+      </section>
+    </main>
+
+    <script src="/ui/app.js?v=3" defer></script>
+  </body>
+</html>
