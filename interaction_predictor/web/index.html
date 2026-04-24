@@ -52,12 +52,12 @@
         <article class="panel snapshot-panel">
           <div class="panel-head">
             <div>
-              <p class="eyebrow">Snapshot</p>
-              <h2>摄像头画面</h2>
+              <p class="eyebrow">Live Stream</p>
+              <h2>实时摄像头画面</h2>
             </div>
-            <button class="icon-button compact" data-endpoint="/snapshot" id="snapshotButton" title="刷新快照">
+            <button class="icon-button compact" id="snapshotButton" title="重连实时画面">
               <span aria-hidden="true">S</span>
-              <span>快照</span>
+              <span>重连</span>
             </button>
           </div>
           <div class="source-controls" aria-label="摄像头输入源">
@@ -75,8 +75,8 @@
             <small id="cameraSourceMeta">-</small>
           </div>
           <div class="snapshot-frame">
-            <img id="snapshot" alt="camera snapshot" />
-            <div id="snapshotEmpty" class="empty">等待摄像头帧</div>
+            <img id="snapshot" alt="camera live stream" />
+            <div id="snapshotEmpty" class="empty">等待实时画面</div>
           </div>
         </article>
 
@@ -167,6 +167,7 @@
               <option value="/latest-scene">GET /latest-scene</option>
               <option value="/latest-interest-object">GET /latest-interest-object</option>
               <option value="/latest-prediction">GET /latest-prediction</option>
+              <option value="/first-person-analysis">POST /first-person-analysis</option>
               <option value="/history/scenes?limit=20">GET /history/scenes?limit=20</option>
               <option value="/history/predictions?limit=20">GET /history/predictions?limit=20</option>
               <option value="/snapshot">GET /snapshot</option>
@@ -212,6 +213,6 @@
       </section>
     </main>
 
-    <script src="/ui/app.js?v=3" defer></script>
+    <script src="/ui/app.js?v=4" defer></script>
   </body>
 </html>

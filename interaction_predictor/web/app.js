@@ -16,6 +16,7 @@ const state = {
   browserStream: null,
   browserVideo: null,
   lastSnapshotUrl: null,
+  liveStreamUrl: null,
   sources: [],
 };
 
@@ -97,8 +98,7 @@ async function postJson(endpoint, payload) {
 
 async function refreshEndpoint(endpoint) {
   if (endpoint === "/snapshot") {
-    await refreshSnapshot();
-    return;
+    return fetchSnapshotInfo();
   }
   const result = await fetchJson(endpoint);
   const target = endpointTargets.get(endpoint);
@@ -223,6 +223,7 @@ async function switchCameraSource() {
       await startBrowserCapture(source);
       meta.textContent = `已切换 ${source}`;
       await new Promise((resolve) => window.setTimeout(resolve, 1200));
+      restartLiveView();
       await refreshAll();
       await refreshCameraSources();
       return;
@@ -232,6 +233,7 @@ async function switchCameraSource() {
     setJson("runnerJson", result.body);
     meta.textContent = result.body.changed ? `已切换 ${source}` : `仍在使用 ${source}`;
     await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    restartLiveView();
     await refreshAll();
     await refreshCameraSources();
   } catch (error) {
@@ -311,23 +313,47 @@ async function postBrowserFrame(source) {
   }
 }
 
-async function refreshSnapshot() {
+function restartLiveView() {
   const image = $("snapshot");
   const empty = $("snapshotEmpty");
-  const url = `/snapshot?t=${Date.now()}`;
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) {
-    image.removeAttribute("src");
-    empty.style.display = "grid";
-    throw new Error(`${response.status} ${response.statusText}`);
-  }
   if (state.lastSnapshotUrl) {
     URL.revokeObjectURL(state.lastSnapshotUrl);
+    state.lastSnapshotUrl = null;
+  }
+  const url = `/stream.mjpg?t=${Date.now()}`;
+  state.liveStreamUrl = url;
+  empty.textContent = "等待实时画面";
+  empty.style.display = "grid";
+  image.onload = () => {
+    empty.style.display = "none";
+  };
+  image.onerror = () => {
+    if (state.liveStreamUrl === url) {
+      empty.textContent = "实时画面连接失败";
+      empty.style.display = "grid";
+    }
+  };
+  image.src = url;
+}
+
+async function fetchSnapshotInfo() {
+  const url = `/snapshot?t=${Date.now()}`;
+  const started = performance.now();
+  const response = await fetch(url, { cache: "no-store" });
+  const elapsed = Math.round(performance.now() - started);
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${body || "request failed"}`);
   }
   const blob = await response.blob();
-  state.lastSnapshotUrl = URL.createObjectURL(blob);
-  image.src = state.lastSnapshotUrl;
-  empty.style.display = "none";
+  return {
+    status: response.status,
+    elapsed_ms: elapsed,
+    body: {
+      bytes: blob.size,
+      content_type: blob.type || response.headers.get("content-type") || "image/jpeg",
+    },
+  };
 }
 
 function updateHealthSummary(health) {
@@ -427,7 +453,6 @@ async function refreshAll() {
       setJson("runnerJson", { errors });
     }
 
-    await refreshSnapshot().catch(() => undefined);
   } catch (error) {
     setJson("healthJson", { error: error.message });
   } finally {
@@ -444,10 +469,18 @@ async function runSelectedEndpoint() {
   meta.textContent = "running";
   try {
     if (endpoint === "/snapshot") {
-      const started = performance.now();
-      await refreshSnapshot();
-      meta.textContent = `GET ${endpoint} 200 ${Math.round(performance.now() - started)}ms`;
-      output.textContent = "snapshot refreshed";
+      const result = await fetchSnapshotInfo();
+      meta.textContent = `GET ${endpoint} ${result.status} ${result.elapsed_ms}ms`;
+      output.textContent = formatJson(result.body);
+      return;
+    }
+    if (endpoint === "/first-person-analysis") {
+      const result = await postJson(
+        "/first-person-analysis?require_stable=true&include_prompt=true&persist=false",
+        {},
+      );
+      meta.textContent = `POST ${endpoint} ${result.status} ${result.elapsed_ms}ms`;
+      output.textContent = formatJson(result.body);
       return;
     }
     const result = await refreshEndpoint(endpoint);
@@ -469,9 +502,7 @@ function setupEvents() {
   }));
   $("switchSource").addEventListener("click", switchCameraSource);
   $("cameraSourceSelect").addEventListener("change", updateSourceMeta);
-  $("snapshotButton").addEventListener("click", () => refreshSnapshot().catch((error) => {
-    setJson("runnerJson", { error: error.message });
-  }));
+  $("snapshotButton").addEventListener("click", restartLiveView);
   $("runEndpoint").addEventListener("click", runSelectedEndpoint);
   $("autoRefresh").addEventListener("change", (event) => {
     if (event.target.checked) {
@@ -505,6 +536,7 @@ function setupEvents() {
 }
 
 setupEvents();
+restartLiveView();
 refreshCameraSources().catch((error) => {
   $("cameraSourceMeta").textContent = `检测失败: ${error.message}`;
 });

@@ -12,14 +12,15 @@ from typing import Any
 import cv2
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .camera import CameraReader, FrameBuffer, detect_camera_sources
 from .config import Settings
-from .interaction_worker import InteractionWorker
+from .interaction_worker import InteractionWorker, _normalize_prediction
 from .llm import JsonLlmClient, build_llm_client
+from .prompts import interaction_prompt
 from .scene_worker import GlobalSceneWorker
 from .storage import JsonlStore
 from .utils import frame_to_jpeg_bytes
@@ -117,6 +118,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "camera_url": runtime.settings.camera_url,
                 "camera_probe_count": runtime.settings.camera_probe_count,
                 "camera_demo_video_path": str(runtime.settings.camera_demo_video_path),
+                "stream_fps": runtime.settings.stream_fps,
                 "llm_provider": runtime.settings.llm_provider,
                 "llm_model": runtime.settings.active_model,
                 "kimi_base_url": runtime.settings.kimi_base_url,
@@ -146,6 +148,63 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/latest-prediction")
     async def latest_prediction() -> dict[str, Any] | None:
         return _runtime(app).prediction_store.latest()
+
+    @app.post("/first-person-analysis")
+    async def first_person_analysis(
+        require_stable: bool = Query(
+            True,
+            description="True 时只分析最近稳定停留的中心兴趣物；False 时使用当前最新兴趣物。",
+        ),
+        include_prompt: bool = Query(True, description="是否在响应中返回实际发送给大模型的 prompt。"),
+        persist: bool = Query(False, description="是否把本次按需分析结果写入预测历史。"),
+    ) -> dict[str, Any]:
+        runtime = _runtime(app)
+        scene = runtime.scene_store.latest()
+        if scene is None:
+            raise HTTPException(status_code=409, detail="no scene observation available yet")
+
+        if require_stable:
+            interest_object = await runtime.object_state.latest_stable_interest_object(
+                min_duration_sec=runtime.settings.interest_stable_duration_sec,
+                min_match_ratio=runtime.settings.interest_stable_match_ratio,
+                min_samples=runtime.settings.interest_stable_min_samples,
+            )
+        else:
+            interest_object = await runtime.object_state.latest_interest_object()
+        if interest_object is None:
+            detail = (
+                "no stable interest object available yet"
+                if require_stable
+                else "no interest object available yet"
+            )
+            raise HTTPException(status_code=409, detail=detail)
+
+        prompt = interaction_prompt(scene, interest_object)
+        raw = await asyncio.wait_for(
+            runtime.llm.generate_json(prompt, max_tokens=700),
+            timeout=runtime.settings.llm_timeout_sec,
+        )
+        prediction = _normalize_prediction(
+            raw=raw,
+            scene=scene,
+            interest_object=interest_object,
+        )
+        prediction_json = prediction.model_dump(mode="json")
+        if persist:
+            runtime.prediction_store.append(prediction_json)
+
+        return {
+            "ok": True,
+            "mode": "first_person_interaction",
+            "question": "如果我在这样一个<环境>中，我的视野关注点在一个<object>上，我可能对这个<object>产生的潜在交互行为是什么？",
+            "require_stable": require_stable,
+            "persisted": persist,
+            "prompt": prompt if include_prompt else None,
+            "scene": scene,
+            "interest_object": interest_object,
+            "raw_llm_output": raw,
+            "prediction": prediction_json,
+        }
 
     @app.get("/history/scenes")
     async def scene_history(limit: int = Query(20, ge=1, le=200)) -> list[dict[str, Any]]:
@@ -208,7 +267,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return Response(status_code=404, content=b"no frame available")
         return Response(content=frame_to_jpeg_bytes(frame.image), media_type="image/jpeg")
 
+    @app.get("/stream.mjpg", include_in_schema=False)
+    async def stream_mjpg(
+        fps: float | None = Query(None, ge=1.0, le=30.0),
+    ) -> StreamingResponse:
+        runtime = _runtime(app)
+        stream_fps = fps or runtime.settings.stream_fps
+        return StreamingResponse(
+            _mjpeg_frame_generator(runtime, fps=stream_fps),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+            },
+        )
+
     return app
+
+
+async def _mjpeg_frame_generator(runtime: Runtime, *, fps: float):
+    last_frame_id = -1
+    delay = 1.0 / max(1.0, min(30.0, fps))
+    while True:
+        frame = await runtime.frame_buffer.latest()
+        if frame is None or frame.frame_id == last_frame_id:
+            await asyncio.sleep(0.03)
+            continue
+        last_frame_id = frame.frame_id
+        try:
+            jpeg = frame_to_jpeg_bytes(frame.image, quality=82)
+        except Exception:  # noqa: BLE001
+            logger.exception("failed to encode mjpeg frame")
+            await asyncio.sleep(delay)
+            continue
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n"
+            b"Cache-Control: no-cache\r\n"
+            + f"X-Frame-Id: {frame.frame_id}\r\n".encode("ascii")
+            + f"X-Frame-Timestamp: {frame.timestamp}\r\n".encode("ascii")
+            + b"\r\n"
+            + jpeg
+            + b"\r\n"
+        )
+        await asyncio.sleep(delay)
 
 
 def _task_status(task: asyncio.Task[Any]) -> dict[str, Any]:

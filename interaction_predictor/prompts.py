@@ -95,9 +95,11 @@ def interaction_prompt(scene: dict[str, Any], interest_object: dict[str, Any]) -
     }
     scene_text = json.dumps(compact_scene, ensure_ascii=False, separators=(",", ":"))
     object_text = json.dumps(compact_object, ensure_ascii=False, separators=(",", ":"))
-    return f"""你是一个第一人称视角下的用户潜在交互行为预测模块。
+    return f"""你是一个拟第一人称视角下的用户潜在交互行为预测模块。
 
-摄像头模拟人的第一人称视角。环境信息表示“我当前所处的环境”，兴趣物表示“我正在持续关注或可能即将交互的物体”。你的任务是推测：我作为人，在<环境>中，对<感兴趣的 object>最可能发生的潜在交互行为。
+这里获得的画面模拟人的第一人称视角。环境信息表示“我当前所处的环境”，兴趣物表示“我当前视野中的关注点”。
+请围绕这个问题回答：
+如果我在这样一个<环境>中，我的视野关注点在一个<object>上，我可能对这个<object>产生的潜在交互行为是什么？
 
 已知环境信息：
 {scene_text}
@@ -105,16 +107,16 @@ def interaction_prompt(scene: dict[str, Any], interest_object: dict[str, Any]) -
 当前用户可能关注的物体：
 {object_text}
 
-请推测“我”在该场景下最可能与该物体发生的前三种交互行为。
+请推测“我”在该环境下，针对这个视野关注 object 最可能发生的前三种潜在交互行为。
 
 要求：
 1. 只输出 JSON，不要输出 Markdown。
 2. 每个行为包含 rank, action, reason, confidence。
 3. confidence 是 0 到 1 的数字。
-4. reason 必须同时引用环境和兴趣物，不要只描述物体类别。
+4. reason 必须同时引用“我所处的环境”和“我视野关注的 object”，不要只描述物体类别。
 5. 不要假设画面之外不存在的危险动作、意图或身份。
 6. 如果场景和物体信息不足，请给出保守推测，并降低 confidence。
-7. 输出中的 action 用短中文动词短语，站在第一人称用户可能行动的角度描述。
+7. 输出中的 action 用短中文动词短语，站在第一人称用户可能行动的角度描述，例如“拿起查看”“等待上车”“避让通行”。
 8. 直接给出结果，不要展开推理过程。
 
 JSON 结构：

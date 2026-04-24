@@ -39,6 +39,7 @@ class Settings:
     camera_reconnect_sec: float = 2.0
     camera_probe_count: int = 6
     camera_demo_video_path: Path = Path("/tmp/interaction-predictor-demo/demo.mp4")
+    stream_fps: float = 10.0
 
     llm_provider: str = "kimi"
     llm_timeout_sec: float = 120.0
@@ -100,6 +101,7 @@ class Settings:
             camera_demo_video_path=Path(
                 os.getenv("CAMERA_DEMO_VIDEO", str(defaults.camera_demo_video_path))
             ),
+            stream_fps=_env_float("STREAM_FPS", defaults.stream_fps),
             llm_provider=os.getenv("LLM_PROVIDER", defaults.llm_provider).lower(),
             llm_timeout_sec=_env_float("LLM_TIMEOUT_SEC", defaults.llm_timeout_sec),
             kimi_base_url=normalize_base_url(kimi_base_url, default_scheme="https"),
@@ -175,6 +177,7 @@ class Settings:
             camera_reconnect_sec=self.camera_reconnect_sec,
             camera_probe_count=self.camera_probe_count,
             camera_demo_video_path=self.camera_demo_video_path,
+            stream_fps=self.stream_fps,
             llm_provider=llm_provider.lower() if llm_provider is not None else self.llm_provider,
             llm_timeout_sec=self.llm_timeout_sec,
             kimi_base_url=self.kimi_base_url,
