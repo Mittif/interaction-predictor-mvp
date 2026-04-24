@@ -64,13 +64,32 @@
             <select id="cameraSourceSelect" aria-label="选择摄像头或测试视频">
               <option value="">检测输入源中...</option>
             </select>
+            <select id="cameraResolutionSelect" aria-label="选择摄像头分辨率">
+              <option value="">自动分辨率</option>
+              <option value="640x480">640 x 480</option>
+              <option value="1280x720">1280 x 720</option>
+              <option value="1920x1080">1920 x 1080</option>
+              <option value="2560x1440">2560 x 1440</option>
+              <option value="3840x2160">3840 x 2160</option>
+            </select>
+            <input
+              id="streamSourceInput"
+              type="url"
+              inputmode="url"
+              placeholder="rtmp://server/live/stream"
+              aria-label="RTMP/RTSP/HTTP 视频流地址"
+            />
             <button class="icon-button compact" id="refreshSources" title="重新检测本机摄像头和测试视频">
               <span aria-hidden="true">D</span>
               <span>检测</span>
             </button>
-            <button class="icon-button compact" id="switchSource" title="切换到选中的输入源">
+            <button class="icon-button compact" id="switchStreamSource" title="使用视频流地址拉流">
+              <span aria-hidden="true">R</span>
+              <span>拉流</span>
+            </button>
+            <button class="icon-button compact" id="switchSource" title="应用输入源和分辨率">
               <span aria-hidden="true">C</span>
-              <span>切换</span>
+              <span>应用</span>
             </button>
             <small id="cameraSourceMeta">-</small>
           </div>
@@ -151,6 +170,20 @@
           </div>
           <pre id="predictionJson" class="json-view">{}</pre>
         </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">GET /latest-first-person-analysis</p>
+              <h2>第一人称分析</h2>
+            </div>
+            <button class="icon-button compact" data-json="/latest-first-person-analysis" title="测试第一人称分析">
+              <span aria-hidden="true">A</span>
+              <span>测试</span>
+            </button>
+          </div>
+          <pre id="firstPersonAnalysisJson" class="json-view">{}</pre>
+        </article>
       </section>
 
       <section class="panel tester">
@@ -164,12 +197,15 @@
               <option value="/health">GET /health</option>
               <option value="/camera/sources">GET /camera/sources</option>
               <option value="/camera/source">GET /camera/source</option>
+              <option value="/camera/resolution">GET /camera/resolution</option>
               <option value="/latest-scene">GET /latest-scene</option>
               <option value="/latest-interest-object">GET /latest-interest-object</option>
               <option value="/latest-prediction">GET /latest-prediction</option>
+              <option value="/latest-first-person-analysis">GET /latest-first-person-analysis</option>
               <option value="/first-person-analysis">POST /first-person-analysis</option>
               <option value="/history/scenes?limit=20">GET /history/scenes?limit=20</option>
               <option value="/history/predictions?limit=20">GET /history/predictions?limit=20</option>
+              <option value="/history/first-person-analyses?limit=20">GET /history/first-person-analyses?limit=20</option>
               <option value="/snapshot">GET /snapshot</option>
             </select>
             <button class="icon-button" id="runEndpoint" title="执行接口">
@@ -210,9 +246,23 @@
           </div>
           <pre id="predictionHistoryJson" class="json-view tall">{}</pre>
         </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">GET /history/first-person-analyses</p>
+              <h2>第一人称分析历史</h2>
+            </div>
+            <button class="icon-button compact" data-json="/history/first-person-analyses?limit=20" title="刷新第一人称分析历史">
+              <span aria-hidden="true">L</span>
+              <span>历史</span>
+            </button>
+          </div>
+          <pre id="firstPersonHistoryJson" class="json-view tall">{}</pre>
+        </article>
       </section>
     </main>
 
-    <script src="/ui/app.js?v=4" defer></script>
+    <script src="/ui/app.js?v=7" defer></script>
   </body>
 </html>

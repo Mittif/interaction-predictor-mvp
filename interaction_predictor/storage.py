@@ -46,5 +46,18 @@ class JsonlStore:
         if limit <= 0 or not self.path.exists():
             return []
         with self._lock:
-            lines = self.path.read_text(encoding="utf-8").splitlines()
-        return [json.loads(line) for line in lines[-limit:] if line.strip()]
+            lines = self._read_tail_lines(limit)
+        return [json.loads(line.decode("utf-8")) for line in lines if line.strip()]
+
+    def _read_tail_lines(self, limit: int) -> list[bytes]:
+        block_size = 8192
+        with self.path.open("rb") as f:
+            f.seek(0, 2)
+            position = f.tell()
+            buffer = b""
+            while position > 0 and buffer.count(b"\n") <= limit:
+                read_size = min(block_size, position)
+                position -= read_size
+                f.seek(position)
+                buffer = f.read(read_size) + buffer
+        return buffer.splitlines()[-limit:]

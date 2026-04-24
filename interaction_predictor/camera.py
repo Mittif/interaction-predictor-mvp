@@ -76,8 +76,56 @@ def _is_avfoundation_source(source: str) -> bool:
     return source.startswith("avfoundation:")
 
 
+RTMP_STREAM_SCHEMES = ("rtmp://", "rtmps://")
+NETWORK_STREAM_SCHEMES = ("http://", "https://", "rtsp://", *RTMP_STREAM_SCHEMES)
+
+
 def is_browser_source(source: str) -> bool:
     return source.startswith("browser:")
+
+
+def is_rtmp_source(source: str) -> bool:
+    return source.lower().startswith(RTMP_STREAM_SCHEMES)
+
+
+def is_network_stream_source(source: str) -> bool:
+    return source.lower().startswith(NETWORK_STREAM_SCHEMES)
+
+
+def _network_stream_scheme(source: str) -> str | None:
+    if "://" not in source:
+        return None
+    return source.split("://", 1)[0].lower()
+
+
+def _resolution_payload(resolution: tuple[int, int] | None) -> dict[str, int] | None:
+    if resolution is None:
+        return None
+    width, height = resolution
+    return {"width": width, "height": height}
+
+
+def _actual_resolution_from_image(image: np.ndarray) -> dict[str, int]:
+    height, width = image.shape[:2]
+    return {"width": int(width), "height": int(height)}
+
+
+def _capture_resolution(cap: cv2.VideoCapture) -> dict[str, int]:
+    return {
+        "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0),
+        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0),
+    }
+
+
+def _apply_capture_resolution(
+    cap: cv2.VideoCapture,
+    resolution: tuple[int, int] | None,
+) -> None:
+    if resolution is None:
+        return
+    width, height = resolution
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
 
 def _parse_avfoundation_source(source: str) -> int | None:
@@ -96,7 +144,9 @@ def _source_label(source: str) -> str:
         return f"AVFoundation 摄像头 {source.split(':', 1)[1]}"
     if source.isdigit():
         return f"本机摄像头 {source}"
-    if source.startswith(("http://", "https://", "rtsp://", "rtmp://")):
+    if is_rtmp_source(source):
+        return f"RTMP 直播流 {source}"
+    if is_network_stream_source(source):
         return source
     return Path(source).name or source
 
@@ -241,15 +291,21 @@ def detect_camera_sources(
         )
 
     if current_source and not any(item.source == current_source for item in sources):
+        current_is_stream = is_network_stream_source(current_source)
+        current_scheme = _network_stream_scheme(current_source)
         sources.insert(
             0,
             CameraSource(
                 id="current",
                 source=current_source,
                 label=f"当前输入 {_source_label(current_source)}",
-                type="custom",
+                type="stream" if current_is_stream else "custom",
                 available=True,
-                details={"source": current_source},
+                details={
+                    "source": current_source,
+                    "scheme": current_scheme,
+                    "live": is_rtmp_source(current_source) or current_scheme == "rtsp",
+                },
             ),
         )
 
@@ -263,13 +319,16 @@ class CameraReader:
         source: str,
         fps_limit: float,
         reconnect_sec: float,
+        resolution: tuple[int, int] | None = None,
     ) -> None:
         self._source = source
+        self._resolution = resolution
         self.fps_limit = fps_limit
         self.reconnect_sec = reconnect_sec
-        self.status: dict[str, str | int | float | bool] = {
+        self.status: dict[str, Any] = {
             "connected": False,
             "source": source,
+            "requested_resolution": _resolution_payload(resolution),
         }
         self._frame_id = 0
         self._source_lock = asyncio.Lock()
@@ -279,24 +338,69 @@ class CameraReader:
         async with self._source_lock:
             return self._source
 
-    async def set_source(self, source: str) -> dict[str, str | bool]:
+    async def get_resolution(self) -> dict[str, int] | None:
         async with self._source_lock:
-            changed = source != self._source
+            return _resolution_payload(self._resolution)
+
+    async def set_resolution(self, resolution: tuple[int, int] | None) -> dict[str, Any]:
+        async with self._source_lock:
+            changed = resolution != self._resolution
             if not changed:
-                return {"source": source, "changed": False}
-            self._source = source
+                return {"resolution": _resolution_payload(self._resolution), "changed": False}
+            self._resolution = resolution
             self.status = {
+                **self.status,
                 "connected": False,
-                "source": source,
+                "source": self._source,
+                "requested_resolution": _resolution_payload(resolution),
                 "switching": True,
             }
             self._switch_event.set()
-            return {"source": source, "changed": True}
+            return {"resolution": _resolution_payload(resolution), "changed": True}
+
+    async def set_source(
+        self,
+        source: str,
+        *,
+        resolution: tuple[int, int] | None = None,
+        resolution_provided: bool = False,
+    ) -> dict[str, Any]:
+        async with self._source_lock:
+            next_resolution = resolution if resolution_provided else self._resolution
+            source_changed = source != self._source
+            resolution_changed = next_resolution != self._resolution
+            changed = source_changed or resolution_changed
+            if not changed:
+                return {
+                    "source": source,
+                    "resolution": _resolution_payload(self._resolution),
+                    "changed": False,
+                }
+            self._source = source
+            self._resolution = next_resolution
+            self.status = {
+                "connected": False,
+                "source": source,
+                "requested_resolution": _resolution_payload(self._resolution),
+                "switching": True,
+            }
+            self._switch_event.set()
+            return {
+                "source": source,
+                "resolution": _resolution_payload(self._resolution),
+                "changed": True,
+                "source_changed": source_changed,
+                "resolution_changed": resolution_changed,
+            }
+
+    async def _current_source_and_resolution(self) -> tuple[str, tuple[int, int] | None]:
+        async with self._source_lock:
+            return self._source, self._resolution
 
     async def run(self, frame_buffer: FrameBuffer) -> None:
         min_delay = 1.0 / self.fps_limit if self.fps_limit > 0 else 0.0
         while True:
-            source = await self.get_source()
+            source, resolution = await self._current_source_and_resolution()
             self._switch_event.clear()
             await frame_buffer.clear()
             if is_browser_source(source):
@@ -304,6 +408,7 @@ class CameraReader:
                     "connected": False,
                     "source": source,
                     "backend": "browser-get-user-media",
+                    "requested_resolution": _resolution_payload(resolution),
                     "waiting_for_frame_upload": True,
                 }
                 while not self._switch_event.is_set() and await self.get_source() == source:
@@ -311,7 +416,11 @@ class CameraReader:
                 continue
 
             if _is_avfoundation_source(source):
-                await self._run_avfoundation_source(source, frame_buffer, min_delay)
+                await self._run_avfoundation_source(source, resolution, frame_buffer, min_delay)
+                continue
+
+            if is_rtmp_source(source) and shutil.which("ffmpeg") is not None:
+                await self._run_ffmpeg_network_source(source, resolution, frame_buffer, min_delay)
                 continue
 
             cap = cv2.VideoCapture(_parse_camera_source(source))
@@ -319,13 +428,21 @@ class CameraReader:
                 self.status = {
                     "connected": False,
                     "source": source,
+                    "requested_resolution": _resolution_payload(resolution),
                     "error": "failed to open camera stream",
                 }
                 logger.warning("failed to open camera stream: %s", source)
                 await asyncio.sleep(self.reconnect_sec)
                 continue
 
-            self.status = {"connected": True, "source": source}
+            if source.isdigit():
+                _apply_capture_resolution(cap, resolution)
+            self.status = {
+                "connected": True,
+                "source": source,
+                "requested_resolution": _resolution_payload(resolution),
+                "actual_resolution": _capture_resolution(cap),
+            }
             try:
                 while True:
                     if self._switch_event.is_set() or await self.get_source() != source:
@@ -336,6 +453,8 @@ class CameraReader:
                         self.status = {
                             "connected": False,
                             "source": source,
+                            "requested_resolution": _resolution_payload(resolution),
+                            "actual_resolution": _capture_resolution(cap),
                             "error": "camera stream read failed",
                         }
                         logger.warning("camera stream read failed, reconnecting")
@@ -349,6 +468,13 @@ class CameraReader:
                             source=source,
                         )
                     )
+                    self.status = {
+                        "connected": True,
+                        "source": source,
+                        "requested_resolution": _resolution_payload(resolution),
+                        "actual_resolution": _actual_resolution_from_image(image),
+                        "frame_id": self._frame_id,
+                    }
                     if min_delay:
                         await asyncio.sleep(min_delay)
             finally:
@@ -360,6 +486,7 @@ class CameraReader:
     async def _run_avfoundation_source(
         self,
         source: str,
+        resolution: tuple[int, int] | None,
         frame_buffer: FrameBuffer,
         min_delay: float,
     ) -> None:
@@ -368,6 +495,7 @@ class CameraReader:
             self.status = {
                 "connected": False,
                 "source": source,
+                "requested_resolution": _resolution_payload(resolution),
                 "error": "invalid avfoundation source",
             }
             await asyncio.sleep(self.reconnect_sec)
@@ -376,15 +504,21 @@ class CameraReader:
             self.status = {
                 "connected": False,
                 "source": source,
+                "requested_resolution": _resolution_payload(resolution),
                 "error": "ffmpeg is required for avfoundation camera sources",
             }
             await asyncio.sleep(self.reconnect_sec)
             return
 
-        stream = _FfmpegAvfoundationStream(index=index, fps=30.0)
+        stream = _FfmpegAvfoundationStream(index=index, fps=30.0, resolution=resolution)
         try:
             await stream.start()
-            self.status = {"connected": False, "source": source, "backend": "ffmpeg-avfoundation"}
+            self.status = {
+                "connected": False,
+                "source": source,
+                "backend": "ffmpeg-avfoundation",
+                "requested_resolution": _resolution_payload(resolution),
+            }
             while True:
                 if self._switch_event.is_set() or await self.get_source() != source:
                     logger.info("switching camera source from %s", source)
@@ -395,12 +529,78 @@ class CameraReader:
                         "connected": False,
                         "source": source,
                         "backend": "ffmpeg-avfoundation",
+                        "requested_resolution": _resolution_payload(resolution),
                         "error": await stream.error_summary(),
                     }
                     logger.warning("avfoundation stream read failed: %s", self.status["error"])
                     break
-                self.status = {"connected": True, "source": source, "backend": "ffmpeg-avfoundation"}
+                self.status = {
+                    "connected": True,
+                    "source": source,
+                    "backend": "ffmpeg-avfoundation",
+                    "requested_resolution": _resolution_payload(resolution),
+                    "actual_resolution": _actual_resolution_from_image(image),
+                }
                 self._frame_id += 1
+                await frame_buffer.put(
+                    Frame(
+                        frame_id=self._frame_id,
+                        timestamp=utc_timestamp(),
+                        image=image,
+                        source=source,
+                    )
+                )
+                if min_delay:
+                    await asyncio.sleep(min_delay)
+        finally:
+            await stream.close()
+        if not self._switch_event.is_set() and await self.get_source() == source:
+            await asyncio.sleep(self.reconnect_sec)
+
+    async def _run_ffmpeg_network_source(
+        self,
+        source: str,
+        resolution: tuple[int, int] | None,
+        frame_buffer: FrameBuffer,
+        min_delay: float,
+    ) -> None:
+        stream = _FfmpegNetworkVideoStream(source=source, resolution=resolution)
+        backend = "ffmpeg-rtmp" if is_rtmp_source(source) else "ffmpeg-network"
+        try:
+            await stream.start()
+            self.status = {
+                "connected": False,
+                "source": source,
+                "backend": backend,
+                "source_type": "stream",
+                "requested_resolution": _resolution_payload(resolution),
+            }
+            while True:
+                if self._switch_event.is_set() or await self.get_source() != source:
+                    logger.info("switching camera source from %s", source)
+                    break
+                image = await stream.read_frame(timeout_sec=max(5.0, self.reconnect_sec))
+                if image is None:
+                    self.status = {
+                        "connected": False,
+                        "source": source,
+                        "backend": backend,
+                        "source_type": "stream",
+                        "requested_resolution": _resolution_payload(resolution),
+                        "error": await stream.error_summary(),
+                    }
+                    logger.warning("network stream read failed: %s", self.status["error"])
+                    break
+                self._frame_id += 1
+                self.status = {
+                    "connected": True,
+                    "source": source,
+                    "backend": backend,
+                    "source_type": "stream",
+                    "requested_resolution": _resolution_payload(resolution),
+                    "actual_resolution": _actual_resolution_from_image(image),
+                    "frame_id": self._frame_id,
+                }
                 await frame_buffer.put(
                     Frame(
                         frame_id=self._frame_id,
@@ -434,41 +634,21 @@ class CameraReader:
             "source": source,
             "backend": "browser-get-user-media",
             "frame_id": self._frame_id,
+            "requested_resolution": await self.get_resolution(),
+            "actual_resolution": _actual_resolution_from_image(image),
         }
         return True
 
 
-class _FfmpegAvfoundationStream:
-    def __init__(self, *, index: int, fps: float) -> None:
-        self.index = index
-        self.fps = fps
+class _FfmpegMjpegPipe:
+    def __init__(self, *, source_name: str) -> None:
+        self.source_name = source_name
         self.process: asyncio.subprocess.Process | None = None
         self._buffer = bytearray()
         self._stderr = bytearray()
         self._stderr_task: asyncio.Task[None] | None = None
 
-    async def start(self) -> None:
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-nostdin",
-            "-f",
-            "avfoundation",
-            "-framerate",
-            str(int(self.fps)),
-            "-i",
-            f"{self.index}:none",
-            "-an",
-            "-q:v",
-            "5",
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "mjpeg",
-            "pipe:1",
-        ]
+    async def _start_command(self, cmd: list[str]) -> None:
         self.process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -517,8 +697,8 @@ class _FfmpegAvfoundationStream:
         if self.process is not None and self.process.returncode is not None:
             return stderr or f"ffmpeg exited with code {self.process.returncode}"
         if stderr:
-            return f"ffmpeg avfoundation source did not produce frames before timeout. stderr: {stderr}"
-        return "ffmpeg avfoundation source did not produce frames before timeout"
+            return f"{self.source_name} did not produce frames before timeout. stderr: {stderr}"
+        return f"{self.source_name} did not produce frames before timeout"
 
     async def close(self) -> None:
         if self.process is not None and self.process.returncode is None:
@@ -531,3 +711,109 @@ class _FfmpegAvfoundationStream:
         if self._stderr_task is not None:
             self._stderr_task.cancel()
             await asyncio.gather(self._stderr_task, return_exceptions=True)
+
+
+class _FfmpegAvfoundationStream(_FfmpegMjpegPipe):
+    def __init__(
+        self,
+        *,
+        index: int,
+        fps: float,
+        resolution: tuple[int, int] | None,
+    ) -> None:
+        super().__init__(source_name="ffmpeg avfoundation source")
+        self.index = index
+        self.fps = fps
+        self.resolution = resolution
+
+    async def start(self) -> None:
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-nostdin",
+            "-f",
+            "avfoundation",
+            "-framerate",
+            str(int(self.fps)),
+        ]
+        if self.resolution is not None:
+            width, height = self.resolution
+            cmd.extend(["-video_size", f"{width}x{height}"])
+        cmd.extend(
+            [
+                "-i",
+                f"{self.index}:none",
+                "-an",
+                "-q:v",
+                "5",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "pipe:1",
+            ]
+        )
+        await self._start_command(cmd)
+
+
+class _FfmpegNetworkVideoStream(_FfmpegMjpegPipe):
+    def __init__(self, *, source: str, resolution: tuple[int, int] | None) -> None:
+        super().__init__(source_name="ffmpeg network stream")
+        self.source = source
+        self.resolution = resolution
+
+    async def start(self) -> None:
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-nostdin",
+            "-fflags",
+            "nobuffer",
+            "-flags",
+            "low_delay",
+            "-avioflags",
+            "direct",
+            "-probesize",
+            "32",
+            "-analyzeduration",
+            "0",
+        ]
+        if is_rtmp_source(self.source):
+            cmd.extend(["-rtmp_live", "live"])
+        cmd.extend(
+            [
+                "-i",
+                self.source,
+                "-map",
+                "0:v:0",
+                "-an",
+            ]
+        )
+        scale_filter = self._scale_filter()
+        if scale_filter is not None:
+            cmd.extend(["-vf", scale_filter])
+        cmd.extend(
+            [
+                "-q:v",
+                "5",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "pipe:1",
+            ]
+        )
+        await self._start_command(cmd)
+
+    def _scale_filter(self) -> str | None:
+        if self.resolution is None:
+            return None
+        width, height = self.resolution
+        return (
+            f"scale=w={width}:h={height}:"
+            "force_original_aspect_ratio=decrease:force_divisible_by=2"
+        )

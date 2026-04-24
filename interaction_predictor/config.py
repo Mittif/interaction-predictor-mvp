@@ -26,6 +26,13 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def _env_optional_int(name: str) -> int | None:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
 def normalize_base_url(base_url: str, *, default_scheme: str = "http") -> str:
     if base_url.startswith(("http://", "https://")):
         return base_url.rstrip("/")
@@ -39,6 +46,8 @@ class Settings:
     camera_reconnect_sec: float = 2.0
     camera_probe_count: int = 6
     camera_demo_video_path: Path = Path("/tmp/interaction-predictor-demo/demo.mp4")
+    camera_width: int | None = None
+    camera_height: int | None = None
     stream_fps: float = 10.0
 
     llm_provider: str = "kimi"
@@ -101,6 +110,8 @@ class Settings:
             camera_demo_video_path=Path(
                 os.getenv("CAMERA_DEMO_VIDEO", str(defaults.camera_demo_video_path))
             ),
+            camera_width=_env_optional_int("CAMERA_WIDTH"),
+            camera_height=_env_optional_int("CAMERA_HEIGHT"),
             stream_fps=_env_float("STREAM_FPS", defaults.stream_fps),
             llm_provider=os.getenv("LLM_PROVIDER", defaults.llm_provider).lower(),
             llm_timeout_sec=_env_float("LLM_TIMEOUT_SEC", defaults.llm_timeout_sec),
@@ -162,6 +173,12 @@ class Settings:
             return self.ollama_vision_model or self.ollama_model
         return self.active_model
 
+    @property
+    def camera_resolution(self) -> tuple[int, int] | None:
+        if self.camera_width is None or self.camera_height is None:
+            return None
+        return self.camera_width, self.camera_height
+
     def with_overrides(
         self,
         *,
@@ -177,6 +194,8 @@ class Settings:
             camera_reconnect_sec=self.camera_reconnect_sec,
             camera_probe_count=self.camera_probe_count,
             camera_demo_video_path=self.camera_demo_video_path,
+            camera_width=self.camera_width,
+            camera_height=self.camera_height,
             stream_fps=self.stream_fps,
             llm_provider=llm_provider.lower() if llm_provider is not None else self.llm_provider,
             llm_timeout_sec=self.llm_timeout_sec,

@@ -3,8 +3,10 @@ const endpointTargets = new Map([
   ["/latest-scene", "sceneJson"],
   ["/latest-interest-object", "objectJson"],
   ["/latest-prediction", "predictionJson"],
+  ["/latest-first-person-analysis", "firstPersonAnalysisJson"],
   ["/history/scenes?limit=20", "sceneHistoryJson"],
   ["/history/predictions?limit=20", "predictionHistoryJson"],
+  ["/history/first-person-analyses?limit=20", "firstPersonHistoryJson"],
 ]);
 
 const state = {
@@ -21,6 +23,7 @@ const state = {
 };
 
 const browserPermissionSource = "browser:request";
+const networkStreamSchemes = ["rtmp://", "rtmps://", "rtsp://", "http://", "https://"];
 
 function $(id) {
   return document.getElementById(id);
@@ -51,6 +54,36 @@ function setStatusCard(id, stateName, detail, level = "warn") {
   card.classList.add(`status-${level}`);
   value.textContent = stateName;
   detailNode.textContent = detail || "-";
+}
+
+function isNetworkStreamSource(source) {
+  const value = String(source || "").trim().toLowerCase();
+  return networkStreamSchemes.some((scheme) => value.startsWith(scheme));
+}
+
+function networkStreamKind(source) {
+  const value = String(source || "").trim().toLowerCase();
+  if (value.startsWith("rtmp://") || value.startsWith("rtmps://")) {
+    return "RTMP";
+  }
+  if (value.startsWith("rtsp://")) {
+    return "RTSP";
+  }
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    return "HTTP";
+  }
+  return "STREAM";
+}
+
+function normalizeNetworkStreamSource(value) {
+  const source = String(value || "").trim();
+  if (!source) {
+    throw new Error("请输入视频流地址");
+  }
+  if (!isNetworkStreamSource(source)) {
+    throw new Error("仅支持 rtmp://、rtmps://、rtsp://、http:// 或 https:// 视频流地址");
+  }
+  return source;
 }
 
 async function fetchJson(endpoint) {
@@ -112,8 +145,12 @@ async function refreshCameraSources() {
   const result = await fetchJson("/camera/sources");
   const select = $("cameraSourceSelect");
   const meta = $("cameraSourceMeta");
+  setResolutionSelectValue(result.body.resolution);
   const backendSources = result.body.sources || [];
   state.sources = [...backendSources, ...browserCameraSources()];
+  if (isNetworkStreamSource(result.body.current_source)) {
+    $("streamSourceInput").value = result.body.current_source;
+  }
   if (navigator.mediaDevices?.getUserMedia) {
     state.sources.push({
       id: browserPermissionSource,
@@ -144,6 +181,39 @@ async function refreshCameraSources() {
   }
   updateSourceMeta();
   return result;
+}
+
+function selectedResolutionPayload() {
+  const value = $("cameraResolutionSelect").value;
+  if (!value) {
+    return { width: null, height: null };
+  }
+  const [width, height] = value.split("x").map((item) => Number.parseInt(item, 10));
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    return { width: null, height: null };
+  }
+  return { width, height };
+}
+
+function resolutionLabel(resolution) {
+  if (!resolution?.width || !resolution?.height) {
+    return "auto";
+  }
+  return `${resolution.width}x${resolution.height}`;
+}
+
+function setResolutionSelectValue(resolution) {
+  const select = $("cameraResolutionSelect");
+  const value = resolution?.width && resolution?.height
+    ? `${resolution.width}x${resolution.height}`
+    : "";
+  if (value && !Array.from(select.options).some((option) => option.value === value)) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = `${resolution.width} x ${resolution.height}`;
+    select.appendChild(option);
+  }
+  select.value = value;
 }
 
 function browserCameraSources() {
@@ -185,13 +255,18 @@ function updateSourceMeta() {
   if (selected.type === "camera") {
     const backend = details.backend ? ` backend=${details.backend}` : "";
     const readable = details.readable === null ? "readable=not-probed" : `readable=${details.readable}`;
-    meta.textContent = `camera index=${details.index}${backend} ${details.width || 0}x${details.height || 0} fps=${Math.round(details.fps || 0)} ${readable}`;
+    meta.textContent = `camera index=${details.index}${backend} ${details.width || 0}x${details.height || 0} fps=${Math.round(details.fps || 0)} ${readable} requested=${resolutionLabel(selectedResolutionPayload())}`;
   } else if (selected.type === "browser-camera") {
-    meta.textContent = `browser getUserMedia index=${details.index} device=${details.device_id ? "ready" : "unknown"}`;
+    meta.textContent = `browser getUserMedia index=${details.index} device=${details.device_id ? "ready" : "unknown"} requested=${resolutionLabel(selectedResolutionPayload())}`;
   } else if (selected.type === "browser-permission") {
     meta.textContent = "点击切换按钮后授权浏览器摄像头并刷新设备列表";
   } else if (selected.type === "video") {
-    meta.textContent = `${selected.available ? "ready" : "missing"} ${details.path || selected.source}`;
+    meta.textContent = `${selected.available ? "ready" : "missing"} ${details.path || selected.source} requested=${resolutionLabel(selectedResolutionPayload())}`;
+  } else if (selected.type === "stream") {
+    $("streamSourceInput").value = selected.source;
+    const backend = details.backend ? ` backend=${details.backend}` : "";
+    const scheme = details.scheme || networkStreamKind(selected.source).toLowerCase();
+    meta.textContent = `${scheme} stream${backend} ${selected.source} requested=${resolutionLabel(selectedResolutionPayload())}`;
   } else {
     meta.textContent = selected.source;
   }
@@ -229,7 +304,10 @@ async function switchCameraSource() {
       return;
     }
     stopBrowserCapture();
-    const result = await postJson("/camera/source", { source });
+    const result = await postJson("/camera/source", {
+      source,
+      ...selectedResolutionPayload(),
+    });
     setJson("runnerJson", result.body);
     meta.textContent = result.body.changed ? `已切换 ${source}` : `仍在使用 ${source}`;
     await new Promise((resolve) => window.setTimeout(resolve, 1200));
@@ -244,13 +322,52 @@ async function switchCameraSource() {
   }
 }
 
+async function switchNetworkStreamSource() {
+  const input = $("streamSourceInput");
+  const button = $("switchStreamSource");
+  const meta = $("cameraSourceMeta");
+  let source;
+  try {
+    source = normalizeNetworkStreamSource(input.value);
+  } catch (error) {
+    meta.textContent = error.message;
+    return;
+  }
+  button.disabled = true;
+  meta.textContent = `pulling ${networkStreamKind(source)} stream`;
+  try {
+    stopBrowserCapture();
+    const result = await postJson("/camera/source", {
+      source,
+      ...selectedResolutionPayload(),
+    });
+    setJson("runnerJson", result.body);
+    meta.textContent = result.body.changed ? `已切换 ${source}` : `仍在使用 ${source}`;
+    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    restartLiveView();
+    await refreshAll();
+    await refreshCameraSources();
+  } catch (error) {
+    meta.textContent = `拉流失败: ${error.message}`;
+    setJson("runnerJson", { endpoint: "/camera/source", source, error: error.message });
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function startBrowserCapture(source) {
   stopBrowserCapture();
   const deviceId = source.slice("browser:".length);
-  const result = await postJson("/camera/source", { source });
+  const resolution = selectedResolutionPayload();
+  const result = await postJson("/camera/source", { source, ...resolution });
   setJson("runnerJson", result.body);
+  const videoConstraints = { deviceId: { exact: deviceId } };
+  if (resolution.width && resolution.height) {
+    videoConstraints.width = { ideal: resolution.width };
+    videoConstraints.height = { ideal: resolution.height };
+  }
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { deviceId: { exact: deviceId } },
+    video: videoConstraints,
     audio: false,
   });
   const video = document.createElement("video");
@@ -358,10 +475,16 @@ async function fetchSnapshotInfo() {
 
 function updateHealthSummary(health) {
   const camera = health?.camera || {};
+  const actual = camera.actual_resolution
+    ? ` ${resolutionLabel(camera.actual_resolution)}`
+    : "";
+  const requested = camera.requested_resolution
+    ? ` requested=${resolutionLabel(camera.requested_resolution)}`
+    : "";
   setStatusCard(
     "cameraStatus",
     camera.connected ? "connected" : "offline",
-    camera.error || camera.source || "no source",
+    camera.error || `${camera.source || "no source"}${actual}${requested}`,
     camera.connected ? "ok" : "bad",
   );
 
@@ -435,18 +558,36 @@ async function refreshAll() {
     const health = await refreshEndpoint("/health");
     updateHealthSummary(health.body);
 
-    const [scene, object, prediction, sceneHistory, predictionHistory] = await Promise.allSettled([
+    const [
+      scene,
+      object,
+      prediction,
+      firstPersonAnalysis,
+      sceneHistory,
+      predictionHistory,
+      firstPersonHistory,
+    ] = await Promise.allSettled([
       refreshEndpoint("/latest-scene"),
       refreshEndpoint("/latest-interest-object"),
       refreshEndpoint("/latest-prediction"),
+      refreshEndpoint("/latest-first-person-analysis"),
       refreshEndpoint("/history/scenes?limit=20"),
       refreshEndpoint("/history/predictions?limit=20"),
+      refreshEndpoint("/history/first-person-analyses?limit=20"),
     ]);
 
     if (prediction.status === "fulfilled") {
       renderPredictionSummary(prediction.value.body);
     }
-    const errors = [scene, object, prediction, sceneHistory, predictionHistory]
+    const errors = [
+      scene,
+      object,
+      prediction,
+      firstPersonAnalysis,
+      sceneHistory,
+      predictionHistory,
+      firstPersonHistory,
+    ]
       .filter((item) => item.status === "rejected")
       .map((item) => item.reason.message);
     if (errors.length) {
@@ -462,6 +603,7 @@ async function refreshAll() {
 
 async function runSelectedEndpoint() {
   const endpoint = $("endpointSelect").value;
+  const method = endpoint === "/first-person-analysis" ? "POST" : "GET";
   const meta = $("runnerMeta");
   const output = $("runnerJson");
   const button = $("runEndpoint");
@@ -476,18 +618,20 @@ async function runSelectedEndpoint() {
     }
     if (endpoint === "/first-person-analysis") {
       const result = await postJson(
-        "/first-person-analysis?require_stable=true&include_prompt=true&persist=false",
+        "/first-person-analysis?require_stable=true&include_prompt=true&persist=true",
         {},
       );
       meta.textContent = `POST ${endpoint} ${result.status} ${result.elapsed_ms}ms`;
       output.textContent = formatJson(result.body);
+      await refreshEndpoint("/latest-first-person-analysis").catch(() => undefined);
+      await refreshEndpoint("/history/first-person-analyses?limit=20").catch(() => undefined);
       return;
     }
     const result = await refreshEndpoint(endpoint);
     meta.textContent = `GET ${endpoint} ${result.status} ${result.elapsed_ms}ms`;
     output.textContent = formatJson(result.body);
   } catch (error) {
-    meta.textContent = `GET ${endpoint} failed`;
+    meta.textContent = `${method} ${endpoint} failed`;
     output.textContent = formatJson({ error: error.message });
   } finally {
     button.disabled = false;
@@ -501,7 +645,15 @@ function setupEvents() {
     setJson("runnerJson", { endpoint: "/camera/sources", error: error.message });
   }));
   $("switchSource").addEventListener("click", switchCameraSource);
+  $("switchStreamSource").addEventListener("click", switchNetworkStreamSource);
   $("cameraSourceSelect").addEventListener("change", updateSourceMeta);
+  $("cameraResolutionSelect").addEventListener("change", updateSourceMeta);
+  $("streamSourceInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      switchNetworkStreamSource();
+    }
+  });
   $("snapshotButton").addEventListener("click", restartLiveView);
   $("runEndpoint").addEventListener("click", runSelectedEndpoint);
   $("autoRefresh").addEventListener("change", (event) => {

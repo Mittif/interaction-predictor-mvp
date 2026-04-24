@@ -18,7 +18,8 @@
 
 1. 全局场景链路：每隔 `SCENE_INTERVAL_SEC` 秒取一帧全图，压缩后直接传给 Kimi 多模态模型，得到当前环境、主要事物和场景推测，并写入 `data/scenes.jsonl`。
 2. 中心兴趣物链路：用 YOLO 高频检测画面里的物体，优先选择靠近画面中心、面积和置信度合理的目标，抽象为“用户当前视野关注点”。
-3. 交互预测链路：只有当中心兴趣物在最近窗口内足够稳定，才把最新场景和兴趣物输入大模型，输出前三个第一人称潜在交互行为，并写入 `data/predictions.jsonl`。
+3. 自动交互预测链路：只有当中心兴趣物在最近窗口内足够稳定，才把最新场景和兴趣物输入大模型，输出前三个第一人称潜在交互行为，并写入 `data/predictions.jsonl`，同时把完整 prompt、原始大模型输出和标准化结果写入 `data/first_person_analyses.jsonl`。
+4. 按需第一人称分析链路：通过 `POST /first-person-analysis` 手动触发一次同类分析，也写入同一个独立 JSONL，便于区分自动预测历史和人工测试历史。
 
 提示词的核心问题是：
 
@@ -43,9 +44,14 @@ flowchart LR
   InterestState --> InteractionWorker
   InteractionWorker --> KimiText["Kimi Text"]
   KimiText --> PredictionStore["data/predictions.jsonl"]
+  InteractionWorker --> AnalysisStore["data/first_person_analyses.jsonl"]
+  API --> OnDemand["POST /first-person-analysis"]
+  OnDemand --> KimiText
+  OnDemand --> AnalysisStore
   SceneStore --> API["FastAPI"]
   InterestState --> API
   PredictionStore --> API
+  AnalysisStore --> API
   API --> UI
 ```
 
@@ -66,6 +72,7 @@ flowchart LR
 - Python 3.10+
 - FastAPI + Uvicorn：本地 API 服务和 Web UI 托管
 - OpenCV：摄像头、本地视频和网络视频流读取
+- ffmpeg：macOS AVFoundation 摄像头和 RTMP/RTMPS 直播流拉帧
 - Ultralytics YOLO：中心兴趣物检测
 - Kimi 中国站 API：多模态场景理解和文本交互预测
 - Pydantic：结构化数据模型
@@ -145,6 +152,9 @@ KIMI_VISION_MODEL=kimi-k2.5
 CAMERA_URL=0
 CAMERA_DEMO_VIDEO=/tmp/interaction-predictor-demo/demo.mp4
 CAMERA_PROBE_COUNT=6
+CAMERA_FPS_LIMIT=8
+CAMERA_WIDTH=640
+CAMERA_HEIGHT=480
 OPENCV_AVFOUNDATION_SKIP_AUTH=0
 
 SCENE_INPUT_MODE=image
@@ -153,6 +163,7 @@ STREAM_FPS=10
 
 YOLO_MODEL=yolo11n.pt
 YOLO_FPS=5
+YOLO_IMAGE_SIZE=416
 INTEREST_STABLE_DURATION_SEC=2
 INTEREST_STABLE_MATCH_RATIO=0.75
 INTEREST_STABLE_MIN_SAMPLES=4
@@ -185,11 +196,43 @@ python -m interaction_predictor --camera-url 0
 本机摄像头 index：0、1、2...
 macOS AVFoundation：avfoundation:0、avfoundation:1...
 浏览器摄像头：前端里选择“浏览器摄像头授权/检测”后出现
-HTTP/RTSP/RTMP：rtmp://example/live/stream
+HTTP/RTSP/RTMP：rtmp://example/live/stream、rtmps://example/live/stream
 本机测试视频：/tmp/interaction-predictor-demo/demo.mp4
 ```
 
-控制台会调用 `GET /camera/sources` 检测本机摄像头和 demo 视频，并可通过 `POST /camera/source` 在线切换，不需要重启服务。
+控制台会调用 `GET /camera/sources` 检测本机摄像头和 demo 视频，并可通过 `POST /camera/source` 在线切换，不需要重启服务。页面可直接填写 `rtmp://` 或 `rtmps://` 直播流地址后点击“拉流”，该直播流会作为实时视频输入源进入 YOLO、场景理解和第一人称交互分析链路。页面上的分辨率下拉会随输入源一起提交；后端摄像头会尝试设置 OpenCV/AVFoundation capture resolution，浏览器摄像头会使用 `getUserMedia` 的 `width`/`height` constraints。
+
+RTMP/RTMPS 源也可以通过环境变量或 API 设置：
+
+```bash
+CAMERA_URL=rtmp://example/live/stream python -m interaction_predictor
+```
+
+```text
+POST /camera/source {"source":"rtmp://example/live/stream"}
+```
+
+检测到 RTMP/RTMPS 输入时，后端会优先使用本机 `ffmpeg` 拉流并把视频帧送入同一个分析缓冲；未安装 `ffmpeg` 时会回退到 OpenCV 的 `VideoCapture`。如果请求了分辨率，RTMP/RTMPS 的 ffmpeg 链路会在输出帧前执行 `scale`，例如页面选择 `640 x 480` 时，16:9 直播流通常会输出 `640 x 360` 的分析帧，从源头减少后续解码、复制和 YOLO 推理成本。
+
+RTMP 低延迟建议先用这组配置测试：
+
+```bash
+CAMERA_FPS_LIMIT=8
+CAMERA_WIDTH=640
+CAMERA_HEIGHT=480
+YOLO_IMAGE_SIZE=416
+YOLO_FPS=5
+```
+
+分辨率 API：
+
+```text
+GET /camera/resolution
+POST /camera/resolution {"width":1280,"height":720}
+POST /camera/resolution {"width":null,"height":null}
+```
+
+如果摄像头不支持请求的分辨率，实际画面尺寸以 `camera.status.actual_resolution` 为准。
 
 macOS 上如果 `GET /camera/sources` 只看到测试视频，通常是当前 Python/终端进程没有摄像头权限，或者系统没有暴露可读的本机摄像头设备。如果 Photo Booth 可用但页面持续 offline，优先在前端使用“浏览器摄像头授权/检测”。浏览器会单独请求摄像头权限，拿到帧后通过 `/camera/browser-frame` 送回本地后端。
 
@@ -204,21 +247,26 @@ GET /
 GET /health
 GET /camera/sources
 GET /camera/source
-POST /camera/source {"source":"0"}
+POST /camera/source {"source":"0","width":1280,"height":720}
+POST /camera/source {"source":"rtmp://example/live/stream"}
+GET /camera/resolution
+POST /camera/resolution {"width":1280,"height":720}
 POST /camera/browser-frame
 GET /latest-scene
 GET /latest-interest-object
 GET /latest-prediction
-POST /first-person-analysis?require_stable=true&include_prompt=true&persist=false
+GET /latest-first-person-analysis
+POST /first-person-analysis?require_stable=true&include_prompt=true&persist=true
 GET /history/scenes?limit=20
 GET /history/predictions?limit=20
+GET /history/first-person-analyses?limit=20
 GET /snapshot
 GET /stream.mjpg
 ```
 
 前端主画面使用 `GET /stream.mjpg` 持续显示 MJPEG 实时流，和大模型推理、历史查询刷新解耦。`GET /snapshot` 只用于单帧调试。
 
-`POST /first-person-analysis` 会按需调用大模型，使用最新场景和当前稳定中心兴趣物，返回实际发送给大模型的 `prompt`、`raw_llm_output` 和标准化后的 `prediction`。设置 `persist=true` 时会写入预测历史。
+`GET /latest-first-person-analysis` 读取 `data/first_person_analyses.jsonl` 中最近一次第一人称分析；自动 worker 和 `POST /first-person-analysis` 都会写入这个文件。`POST /first-person-analysis` 会按需调用大模型，使用最新场景和当前稳定中心兴趣物，返回实际发送给大模型的 `prompt`、`raw_llm_output` 和标准化后的 `prediction`。设置 `persist=true` 时会写入独立的第一人称分析历史。
 
 ## 输出文件
 
@@ -227,6 +275,7 @@ GET /stream.mjpg
 ```text
 data/scenes.jsonl
 data/predictions.jsonl
+data/first_person_analyses.jsonl
 ```
 
 这些文件用于 MVP 调试和回放分析，默认不建议提交到仓库。

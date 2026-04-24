@@ -97,10 +97,15 @@ h2 {
   justify-content: flex-start;
 }
 
-.source-controls select {
+.source-controls select,
+.source-controls input {
   flex: 1 1 260px;
   min-width: 220px;
   padding: 0 12px;
+}
+
+.source-controls input {
+  flex-basis: 320px;
 }
 
 .source-controls small {
@@ -113,7 +118,8 @@ h2 {
 
 .icon-button,
 .toggle,
-select {
+select,
+input {
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -415,6 +421,7 @@ select {
   }
 
   .source-controls select,
+  .source-controls input,
   .source-controls .icon-button {
     width: 100%;
   }

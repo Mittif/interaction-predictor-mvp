@@ -13,6 +13,11 @@ from .yolo_worker import InterestObjectState
 
 logger = logging.getLogger(__name__)
 
+FIRST_PERSON_INTERACTION_QUESTION = (
+    "如果我在这样一个<环境>中，我的视野关注点在一个<object>上，"
+    "我可能对这个<object>产生的潜在交互行为是什么？"
+)
+
 
 def _confidence(value: Any, default: float = 0.0) -> float:
     try:
@@ -102,6 +107,34 @@ def _normalize_prediction(
     )
 
 
+def _build_first_person_analysis_record(
+    *,
+    prediction: InteractionPrediction,
+    scene: dict[str, Any],
+    interest_object: dict[str, Any],
+    prompt: str,
+    raw: dict[str, Any],
+    require_stable: bool,
+    trigger: str,
+    source: str | None = None,
+) -> dict[str, Any]:
+    prediction_json = prediction.model_dump(mode="json")
+    return {
+        "id": prediction_json["id"].replace("prediction_", "first_person_analysis_", 1),
+        "timestamp": prediction_json["timestamp"],
+        "mode": "first_person_interaction",
+        "trigger": trigger,
+        "question": FIRST_PERSON_INTERACTION_QUESTION,
+        "require_stable": require_stable,
+        "source": source if source is not None else scene.get("source"),
+        "scene": scene,
+        "interest_object": interest_object,
+        "prompt": prompt,
+        "raw_llm_output": raw,
+        "prediction": prediction_json,
+    }
+
+
 class InteractionWorker:
     def __init__(
         self,
@@ -110,6 +143,7 @@ class InteractionWorker:
         object_state: InterestObjectState,
         scene_store: JsonlStore,
         prediction_store: JsonlStore,
+        first_person_analysis_store: JsonlStore | None = None,
         interval_sec: float,
         stable_duration_sec: float = 2.0,
         stable_match_ratio: float = 0.75,
@@ -120,6 +154,7 @@ class InteractionWorker:
         self.object_state = object_state
         self.scene_store = scene_store
         self.prediction_store = prediction_store
+        self.first_person_analysis_store = first_person_analysis_store
         self.interval_sec = interval_sec
         self.stable_duration_sec = stable_duration_sec
         self.stable_match_ratio = stable_match_ratio
@@ -176,8 +211,9 @@ class InteractionWorker:
                     "stable_duration_sec": self.stable_duration_sec,
                     "error": None,
                 }
+                prompt = interaction_prompt(scene, interest_object)
                 raw = await self._generate_json_with_reset(
-                    prompt=interaction_prompt(scene, interest_object),
+                    prompt=prompt,
                     generation=generation,
                     reset_event=self._reset_event,
                 )
@@ -191,6 +227,18 @@ class InteractionWorker:
                     interest_object=interest_object,
                 )
                 self.prediction_store.append(prediction.model_dump(mode="json"))
+                if self.first_person_analysis_store is not None:
+                    self.first_person_analysis_store.append(
+                        _build_first_person_analysis_record(
+                            prediction=prediction,
+                            scene=scene,
+                            interest_object=interest_object,
+                            prompt=prompt,
+                            raw=raw,
+                            require_stable=True,
+                            trigger="stable_interest_object",
+                        )
+                    )
                 self._last_key = key
                 self.health = {
                     "ready": True,
