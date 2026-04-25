@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Cinema Portal Scene</title>
     <link rel="stylesheet" href="/styles.css" />
-    <link rel="preload" href="/media/cinema-demo.mp4" as="video" type="video/mp4" />
+    <link rel="preload" href="/media/ascii-hello-world.mp4" as="video" type="video/mp4" />
     <style>
       body {
         overflow: hidden;
@@ -51,6 +51,87 @@
         pointer-events: auto;
       }
 
+      .cinema-actions button {
+        position: relative;
+        display: grid;
+        width: 48px;
+        height: 48px;
+        min-width: 48px;
+        place-items: center;
+        border-radius: 999px;
+        padding: 0;
+        font-size: 0;
+        line-height: 0;
+      }
+
+      .cinema-actions button::before,
+      .cinema-actions button::after {
+        content: "";
+        display: block;
+      }
+
+      #homeButton::before {
+        width: 18px;
+        height: 14px;
+        border: 3px solid currentColor;
+        border-top: 0;
+        transform: translateY(4px);
+      }
+
+      #homeButton::after {
+        position: absolute;
+        top: 13px;
+        width: 16px;
+        height: 16px;
+        border-left: 3px solid currentColor;
+        border-top: 3px solid currentColor;
+        transform: rotate(45deg);
+      }
+
+      #playButton::before {
+        margin-left: 4px;
+        border-top: 10px solid transparent;
+        border-bottom: 10px solid transparent;
+        border-left: 16px solid currentColor;
+      }
+
+      #playButton.is-playing::before {
+        width: 6px;
+        height: 20px;
+        margin-left: -10px;
+        border: 0;
+        background: currentColor;
+        box-shadow: 12px 0 0 currentColor;
+      }
+
+      #muteButton::before {
+        width: 10px;
+        height: 16px;
+        background: currentColor;
+        clip-path: polygon(0 28%, 42% 28%, 100% 0, 100% 100%, 42% 72%, 0 72%);
+      }
+
+      #muteButton::after {
+        position: absolute;
+        width: 18px;
+        height: 18px;
+        border: 3px solid currentColor;
+        border-left: 0;
+        border-top-color: transparent;
+        border-bottom-color: transparent;
+        border-radius: 50%;
+        transform: translateX(8px);
+      }
+
+      #muteButton.is-muted::after {
+        width: 24px;
+        height: 3px;
+        border: 0;
+        border-radius: 999px;
+        background: currentColor;
+        transform: rotate(-45deg);
+      }
+
       #cinemaVideo {
         display: none;
       }
@@ -62,18 +143,18 @@
   </head>
   <body>
     <canvas id="stageCanvas"></canvas>
-    <video id="cinemaVideo" src="/media/cinema-demo.mp4" preload="auto" playsinline loop crossorigin="anonymous"></video>
+    <video id="cinemaVideo" src="/media/ascii-hello-world.mp4" preload="auto" playsinline loop crossorigin="anonymous"></video>
     <div class="cinema-hud">
       <div class="cinema-card">
         <p>Local Scene</p>
         <h1>Cinema</h1>
       </div>
       <div class="cinema-actions">
-        <button id="homeButton" type="button">返回 Home</button>
-        <button id="playButton" type="button">播放</button>
-        <button id="muteButton" type="button">静音</button>
+        <button id="homeButton" type="button" aria-label="返回 Home"></button>
+        <button id="playButton" type="button" aria-label="播放"></button>
+        <button id="muteButton" type="button" aria-label="静音"></button>
       </div>
     </div>
-    <script type="module" src="/scenes/cinema.js?v=local-xr-2"></script>
+    <script type="module" src="/scenes/cinema.js?v=seat-ascii-4"></script>
   </body>
 </html>

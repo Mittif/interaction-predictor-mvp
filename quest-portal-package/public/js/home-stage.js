@@ -355,7 +355,7 @@ function addScaleProps() {
 function createPortalPlaceholders(scenes) {
   for (const item of scenes) {
     const portal = createPortal(item);
-    portal.visible = false;
+    portal.visible = true;
     portals.set(item.id, portal);
     scene.add(portal);
 
@@ -408,6 +408,8 @@ function createPortal(item) {
   const group = new THREE.Group();
   group.position.set(position[0], position[1], position[2]);
   group.userData.scene = item;
+  group.userData.defaultScene = item;
+  group.userData.isRecommended = false;
 
   const outer = new THREE.Mesh(
     new THREE.TorusGeometry(0.52, 0.032, 24, 128),
@@ -459,9 +461,20 @@ function createPortal(item) {
     particles.add(dot);
   }
   group.add(particles);
+
+  const badge = textMesh("推荐", 0.46, 0.14, {
+    color: "#052e16",
+    background: "rgba(134,239,172,0.82)",
+    fontSize: 54
+  });
+  badge.position.set(0, 0.72, 0.03);
+  badge.visible = false;
+  group.add(badge);
+
   group.userData.outer = outer;
   group.userData.inner = inner;
   group.userData.particles = particles;
+  group.userData.badge = badge;
   group.userData.baseScale = 1;
 
   addTextToGroup(group, item.title, [0, -0.78, 0.02], 1.25, 0.24);
@@ -671,10 +684,6 @@ function applyDecision(nextDecision) {
   renderScores(nextDecision.scores || []);
   updateRoutePanel(nextDecision);
 
-  for (const portal of portals.values()) {
-    portal.visible = false;
-  }
-
   if (!nextDecision.scene) {
     activePortal = null;
     portalStatus.textContent = "closed";
@@ -683,16 +692,18 @@ function applyDecision(nextDecision) {
     activeSceneDescription.textContent = "等待 first_person_analyses.jsonl 写入新的分析结果。";
     enterButton.disabled = true;
     setActiveBeam(null);
+    setRecommendedPortal(null);
     return;
   }
 
   activePortal = portals.get(nextDecision.scene.id) || null;
   if (activePortal) {
     activePortal.userData.scene = nextDecision.scene;
-    activePortal.visible = true;
     setActiveBeam(activePortal, nextDecision.scene);
+    setRecommendedPortal(activePortal);
   } else {
     setActiveBeam(null);
+    setRecommendedPortal(null);
   }
 
   portalStatus.textContent = nextDecision.scene.label || nextDecision.scene.title;
@@ -700,6 +711,21 @@ function applyDecision(nextDecision) {
   activeSceneTitle.textContent = nextDecision.scene.title;
   activeSceneDescription.textContent = nextDecision.scene.description || nextDecision.scene.url;
   enterButton.disabled = false;
+}
+
+function setRecommendedPortal(recommendedPortal) {
+  for (const portal of portals.values()) {
+    const recommended = portal === recommendedPortal;
+    portal.visible = true;
+    portal.userData.isRecommended = recommended;
+    portal.userData.scene = recommended ? portal.userData.scene : portal.userData.defaultScene;
+    portal.userData.outer.material.emissiveIntensity = recommended ? 1.7 : 0.54;
+    portal.userData.outer.material.opacity = recommended ? 1 : 0.78;
+    portal.userData.outer.material.transparent = true;
+    portal.userData.inner.material.opacity = recommended ? 0.2 : 0.08;
+    portal.userData.badge.visible = recommended;
+    portal.userData.baseScale = recommended ? 1.08 : 0.92;
+  }
 }
 
 function updateRoutePanel(nextDecision) {
@@ -801,22 +827,33 @@ function updateControllerRaycasts() {
 }
 
 function findPortalHit(activeRaycaster) {
-  if (!activePortal || !activePortal.visible) return null;
   const targets = [];
-  activePortal.traverse((object) => {
-    if (object.name === "portal-hit") targets.push(object);
-  });
+  for (const portal of portals.values()) {
+    if (!portal.visible) continue;
+    portal.traverse((object) => {
+      if (object.name === "portal-hit") targets.push(object);
+    });
+  }
   const hit = activeRaycaster.intersectObjects(targets, false)[0];
   return hit?.object?.userData?.portalRoot || null;
 }
 
 function checkWalkThroughPortal() {
-  if (!renderer.xr.isPresenting || !activePortal) return;
+  if (!renderer.xr.isPresenting || !portals.size) return;
   camera.getWorldPosition(userPosition);
-  const portalPos = activePortal.getWorldPosition(new THREE.Vector3());
-  const horizontalDistance = Math.hypot(userPosition.x - portalPos.x, userPosition.z - portalPos.z);
-  if (horizontalDistance < (config.homeStage?.portalActivationDistance || 0.75)) {
-    enterScene(activePortal.userData.scene);
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const portal of portals.values()) {
+    if (!portal.visible) continue;
+    const portalPos = portal.getWorldPosition(new THREE.Vector3());
+    const horizontalDistance = Math.hypot(userPosition.x - portalPos.x, userPosition.z - portalPos.z);
+    if (horizontalDistance < nearestDistance) {
+      nearest = portal;
+      nearestDistance = horizontalDistance;
+    }
+  }
+  if (nearest && nearestDistance < (config.homeStage?.portalActivationDistance || 0.75)) {
+    enterScene(nearest.userData.scene);
   }
 }
 
@@ -840,14 +877,19 @@ function render() {
   if (activeBeam?.visible) {
     activeBeam.material.opacity = 0.38 + Math.sin(elapsed * 4.2) * 0.1;
   }
-  if (activePortal?.visible) {
-    activePortal.rotation.z = Math.sin(elapsed * 0.8) * 0.03;
-    activePortal.scale.setScalar(1 + Math.sin(elapsed * 2.1) * 0.025);
-    activePortal.userData.inner.material.opacity = 0.16 + Math.sin(elapsed * 2.8) * 0.045;
-    const particles = activePortal.userData.particles;
+  for (const portal of portals.values()) {
+    if (!portal.visible) continue;
+    const recommended = portal.userData.isRecommended;
+    const hovered = portal === controllerState.hovered || portal === controllerState.desktopHovered;
+    const pulse = recommended ? 0.04 : 0.018;
+    portal.rotation.z = Math.sin(elapsed * 0.8 + portal.position.x) * (recommended ? 0.035 : 0.014);
+    portal.scale.setScalar(portal.userData.baseScale + Math.sin(elapsed * 2.1 + portal.position.x) * pulse + (hovered ? 0.05 : 0));
+    portal.userData.inner.material.opacity = (recommended ? 0.16 : 0.07) + Math.sin(elapsed * 2.8 + portal.position.x) * (recommended ? 0.045 : 0.018);
+    const particles = portal.userData.particles;
     particles.children.forEach((dot, index) => {
-      const angle = dot.userData.angle + elapsed * (0.38 + (index % 4) * 0.035);
-      const radius = 0.65 + Math.sin(elapsed * 1.7 + index) * 0.04;
+      const speed = recommended ? 0.38 : 0.18;
+      const angle = dot.userData.angle + elapsed * (speed + (index % 4) * 0.035);
+      const radius = 0.65 + Math.sin(elapsed * 1.7 + index) * (recommended ? 0.04 : 0.022);
       dot.position.x = Math.cos(angle) * radius;
       dot.position.y = Math.sin(angle) * radius;
     });

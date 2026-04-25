@@ -53,6 +53,7 @@ const tmpMatrix = new THREE.Matrix4();
 const interactive = [];
 const neonLights = [];
 const speakerPulses = [];
+const ambientPracticalLights = [];
 let lyricPanel = null;
 
 buildGarage();
@@ -72,7 +73,7 @@ function buildGarage() {
 
   const floor = new THREE.Mesh(
     new THREE.BoxGeometry(7.5, 0.08, 7.5),
-    new THREE.MeshStandardMaterial({ color: 0x2b2924, roughness: 0.84, metalness: 0.1 })
+    new THREE.MeshStandardMaterial({ color: 0x2a2823, roughness: 0.88, metalness: 0.08 })
   );
   floor.position.y = -0.04;
   floor.receiveShadow = true;
@@ -118,13 +119,61 @@ function buildGarage() {
     scene.add(slat);
   }
 
+  createGarageArchitecture();
   createKtvScreen();
   createSpeakers();
   createSofa();
   createCarSilhouette();
   createMicrophones();
+  createLivedInDetails();
   createControlButtons();
   createNeon();
+}
+
+function createGarageArchitecture() {
+  const ceiling = new THREE.Mesh(
+    new THREE.BoxGeometry(7.5, 0.1, 7.5),
+    new THREE.MeshStandardMaterial({ color: 0x15120f, roughness: 0.92 })
+  );
+  ceiling.position.set(0, 3.22, 0);
+  scene.add(ceiling);
+
+  const beamMat = new THREE.MeshStandardMaterial({ color: 0x3b3028, roughness: 0.76, metalness: 0.12 });
+  for (const z of [-2.7, -1.35, 0, 1.35, 2.7]) {
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.08, 0.09), beamMat);
+    beam.position.set(0, 3.08, z);
+    beam.castShadow = true;
+    scene.add(beam);
+  }
+
+  const floorSeamMat = new THREE.MeshBasicMaterial({ color: 0x4a463d, transparent: true, opacity: 0.32 });
+  for (const x of [-1.25, 1.25]) {
+    const seam = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.01, 7.2), floorSeamMat);
+    seam.position.set(x, 0.015, 0);
+    scene.add(seam);
+  }
+  for (const z of [-1.25, 1.25]) {
+    const seam = new THREE.Mesh(new THREE.BoxGeometry(7.2, 0.01, 0.018), floorSeamMat);
+    seam.position.set(0, 0.016, z);
+    scene.add(seam);
+  }
+
+  const warmLamp = new THREE.PointLight(0xffc078, 1.4, 5.5);
+  warmLamp.position.set(-2.7, 2.65, 1.6);
+  ambientPracticalLights.push(warmLamp);
+  scene.add(warmLamp);
+  const lampBody = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22, 0.18, 0.08, 32),
+    new THREE.MeshStandardMaterial({
+      color: 0xffd7a8,
+      emissive: 0xffa647,
+      emissiveIntensity: 0.55,
+      roughness: 0.45
+    })
+  );
+  lampBody.position.copy(warmLamp.position);
+  lampBody.rotation.x = Math.PI / 2;
+  scene.add(lampBody);
 }
 
 function createKtvScreen() {
@@ -241,6 +290,89 @@ function createSofa() {
     cushion.position.set(-1.78 + i * 0.72, 0.63, -1.44);
     cushion.castShadow = true;
     scene.add(cushion);
+  }
+}
+
+function createLivedInDetails() {
+  createStorageShelves();
+  createCoffeeTable();
+  createWallPegboard();
+  createGarageRugAndStains();
+}
+
+function createStorageShelves() {
+  const shelfMat = new THREE.MeshStandardMaterial({ color: 0x5f4635, roughness: 0.76 });
+  const boxMat = new THREE.MeshStandardMaterial({ color: 0x8a6242, roughness: 0.88 });
+  for (const y of [0.9, 1.42, 1.94]) {
+    const shelf = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.05, 0.32), shelfMat);
+    shelf.position.set(-2.82, y, -1.35);
+    shelf.castShadow = true;
+    scene.add(shelf);
+  }
+  for (let i = 0; i < 6; i += 1) {
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.28), boxMat);
+    box.position.set(-3.28 + (i % 3) * 0.42, 1.05 + Math.floor(i / 3) * 0.52, -1.35);
+    box.castShadow = true;
+    scene.add(box);
+  }
+}
+
+function createCoffeeTable() {
+  const tableMat = new THREE.MeshStandardMaterial({ color: 0x3b2a20, roughness: 0.62, metalness: 0.08 });
+  const table = new THREE.Mesh(new THREE.BoxGeometry(1.16, 0.16, 0.56), tableMat);
+  table.position.set(-1.02, 0.32, -0.68);
+  table.castShadow = true;
+  table.receiveShadow = true;
+  scene.add(table);
+
+  const bottleMat = new THREE.MeshStandardMaterial({
+    color: 0x89c2ff,
+    transparent: true,
+    opacity: 0.72,
+    roughness: 0.14,
+    metalness: 0.02
+  });
+  for (const x of [-1.28, -0.82]) {
+    const bottle = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.28, 20), bottleMat);
+    bottle.position.set(x, 0.54, -0.66);
+    bottle.castShadow = true;
+    scene.add(bottle);
+  }
+}
+
+function createWallPegboard() {
+  const board = new THREE.Mesh(
+    new THREE.BoxGeometry(1.38, 0.78, 0.035),
+    new THREE.MeshStandardMaterial({ color: 0x5a3c28, roughness: 0.86 })
+  );
+  board.position.set(2.55, 1.62, -3.08);
+  scene.add(board);
+
+  const toolMat = new THREE.MeshStandardMaterial({ color: 0xb0a99d, roughness: 0.36, metalness: 0.58 });
+  for (let i = 0; i < 5; i += 1) {
+    const tool = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.34, 0.025), toolMat);
+    tool.position.set(2.08 + i * 0.22, 1.64 + Math.sin(i) * 0.12, -3.045);
+    tool.rotation.z = (i - 2) * 0.12;
+    scene.add(tool);
+  }
+}
+
+function createGarageRugAndStains() {
+  const rug = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.15, 1.24),
+    new THREE.MeshStandardMaterial({ color: 0x2a1712, roughness: 0.94 })
+  );
+  rug.rotation.x = -Math.PI / 2;
+  rug.position.set(-0.88, 0.018, -0.82);
+  scene.add(rug);
+
+  const stainMat = new THREE.MeshBasicMaterial({ color: 0x080706, transparent: true, opacity: 0.34, depthWrite: false });
+  for (const [x, z, sx, sz] of [[1.72, -0.1, 0.52, 0.24], [2.08, -1.22, 0.34, 0.18]]) {
+    const stain = new THREE.Mesh(new THREE.CircleGeometry(0.42, 28), stainMat);
+    stain.rotation.x = -Math.PI / 2;
+    stain.scale.set(sx, sz, 1);
+    stain.position.set(x, 0.022, z);
+    scene.add(stain);
   }
 }
 
@@ -471,6 +603,9 @@ function render() {
   const elapsed = clock.getElapsedTime();
   neonLights.forEach((light, index) => {
     light.intensity += Math.sin(elapsed * 2 + index) * 0.01;
+  });
+  ambientPracticalLights.forEach((light, index) => {
+    light.intensity = 1.28 + Math.sin(elapsed * 1.6 + index) * 0.08;
   });
   speakerPulses.forEach((pulse, index) => {
     const wave = musicPlaying ? (Math.sin(elapsed * 5.2 + index) + 1) * 0.5 : 0;

@@ -16,9 +16,9 @@
       "label": "影院",
       "kind": "local",
       "url": "/scenes/cinema.html",
-      "description": "本地集成 stereo-video 风格的沉浸式观影空间，使用本地视频文件并保留 Quest 手柄交互与返回 Home。",
+      "description": "本地沉浸式影院座位视角，播放 ASCII Hello World 本地视频，并保留 Quest 手柄交互与返回 Home。",
       "media": {
-        "videoUrl": "/media/cinema-demo.mp4"
+        "videoUrl": "/media/ascii-hello-world.mp4"
       },
       "portal": {
         "color": "#7dd3fc",

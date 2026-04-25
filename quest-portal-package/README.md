@@ -7,9 +7,9 @@ This folder packages the `localhost:8000` interaction-predictor output into a Qu
 - Reads `/Users/mitty/Documents/GitHub/interaction-predictor-mvp/data/first_person_analyses.jsonl`.
 - Watches the latest JSONL record.
 - Scores the record against configurable scene rules in `config/portal.config.json`.
-- Shows a WebXR room-scale Home stage with a generated portal for the winning scene.
+- Shows a WebXR room-scale Home stage with all configured portals open; the JSONL winner is highlighted as the recommended route.
 - Serves the Home stage, local vendor files, local media, local scene pages, and the packaged Gemini Slingshot game from this folder.
-- Opens one of three current scenes:
+- Lets Quest controllers enter any of the three current scenes:
   - Cinema: local stereo-video-style scene at `/scenes/cinema.html`
   - Family KTV Audio: local positional-audio-style KTV scene at `/scenes/garage-ktv.html`
   - Gemini Slingshot: packaged local game at `/game/`
@@ -50,7 +50,7 @@ Static scene edits can usually be tested with a browser refresh. Changes to `ser
 Runtime assets currently served from this folder:
 
 - Three.js and WebXR support: `public/vendor/`
-- Cinema video: `public/media/cinema-demo.mp4`
+- Cinema video: `public/media/ascii-hello-world.mp4`
 - KTV music loop: `public/media/garage-ktv-loop.wav`
 - Local Cinema and KTV scene code: `public/scenes/`
 - Gemini Slingshot build: `public/game/`
