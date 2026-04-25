@@ -9,6 +9,7 @@ import platform
 import re
 import shutil
 import subprocess
+import time
 from collections import deque
 from dataclasses import dataclass
 from functools import partial
@@ -100,6 +101,10 @@ def _network_stream_scheme(source: str) -> str | None:
     return source.split("://", 1)[0].lower()
 
 
+def _format_ffmpeg_number(value: float) -> str:
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
 def _resolution_payload(resolution: tuple[int, int] | None) -> dict[str, int] | None:
     if resolution is None:
         return None
@@ -110,6 +115,19 @@ def _resolution_payload(resolution: tuple[int, int] | None) -> dict[str, int] | 
 def _actual_resolution_from_image(image: np.ndarray) -> dict[str, int]:
     height, width = image.shape[:2]
     return {"width": int(width), "height": int(height)}
+
+
+def _resize_to_max_side(image: np.ndarray, max_side: int | None) -> np.ndarray:
+    if max_side is None or max_side <= 0:
+        return image
+    height, width = image.shape[:2]
+    current_max_side = max(width, height)
+    if current_max_side <= max_side:
+        return image
+    scale = max_side / float(current_max_side)
+    next_width = max(1, int(round(width * scale)))
+    next_height = max(1, int(round(height * scale)))
+    return cv2.resize(image, (next_width, next_height), interpolation=cv2.INTER_AREA)
 
 
 def _capture_resolution(cap: cv2.VideoCapture) -> dict[str, int]:
@@ -322,17 +340,24 @@ class CameraReader:
         fps_limit: float,
         reconnect_sec: float,
         resolution: tuple[int, int] | None = None,
+        analysis_fps_limit: float = 8.0,
+        analysis_max_side: int | None = 640,
     ) -> None:
         self._source = source
         self._resolution = resolution
         self.fps_limit = fps_limit
+        self.analysis_fps_limit = analysis_fps_limit
+        self.analysis_max_side = analysis_max_side
         self.reconnect_sec = reconnect_sec
         self.status: dict[str, Any] = {
             "connected": False,
             "source": source,
             "requested_resolution": _resolution_payload(resolution),
+            **self._analysis_config_status(),
         }
         self._frame_id = 0
+        self._last_analysis_frame_id: int | None = None
+        self._last_analysis_frame_at = 0.0
         self._source_lock = asyncio.Lock()
         self._switch_event = asyncio.Event()
         self._io_executor = concurrent.futures.ThreadPoolExecutor(
@@ -363,6 +388,7 @@ class CameraReader:
                 "source": self._source,
                 "requested_resolution": _resolution_payload(resolution),
                 "switching": True,
+                **self._analysis_config_status(),
             }
             self._switch_event.set()
             return {"resolution": _resolution_payload(resolution), "changed": True}
@@ -392,6 +418,7 @@ class CameraReader:
                 "source": source,
                 "requested_resolution": _resolution_payload(self._resolution),
                 "switching": True,
+                **self._analysis_config_status(),
             }
             self._switch_event.set()
             return {
@@ -406,12 +433,19 @@ class CameraReader:
         async with self._source_lock:
             return self._source, self._resolution
 
-    async def run(self, frame_buffer: FrameBuffer) -> None:
+    async def run(
+        self,
+        preview_frame_buffer: FrameBuffer,
+        *,
+        analysis_frame_buffer: FrameBuffer | None = None,
+    ) -> None:
         min_delay = 1.0 / self.fps_limit if self.fps_limit > 0 else 0.0
         while True:
             source, resolution = await self._current_source_and_resolution()
             self._switch_event.clear()
-            await frame_buffer.clear()
+            self._last_analysis_frame_at = 0.0
+            self._last_analysis_frame_id = None
+            await self._clear_frame_buffers(preview_frame_buffer, analysis_frame_buffer)
             if is_browser_source(source):
                 self.status = {
                     "connected": False,
@@ -419,17 +453,30 @@ class CameraReader:
                     "backend": "browser-get-user-media",
                     "requested_resolution": _resolution_payload(resolution),
                     "waiting_for_frame_upload": True,
+                    **self._analysis_config_status(),
                 }
                 while not self._switch_event.is_set() and await self.get_source() == source:
                     await asyncio.sleep(self.reconnect_sec)
                 continue
 
             if _is_avfoundation_source(source):
-                await self._run_avfoundation_source(source, resolution, frame_buffer, min_delay)
+                await self._run_avfoundation_source(
+                    source,
+                    resolution,
+                    preview_frame_buffer,
+                    analysis_frame_buffer,
+                    min_delay,
+                )
                 continue
 
             if is_network_stream_source(source) and shutil.which("ffmpeg") is not None:
-                await self._run_ffmpeg_network_source(source, resolution, frame_buffer, min_delay)
+                await self._run_ffmpeg_network_source(
+                    source,
+                    resolution,
+                    preview_frame_buffer,
+                    analysis_frame_buffer,
+                    min_delay,
+                )
                 continue
 
             cap = cv2.VideoCapture(_parse_camera_source(source))
@@ -439,6 +486,7 @@ class CameraReader:
                     "source": source,
                     "requested_resolution": _resolution_payload(resolution),
                     "error": "failed to open camera stream",
+                    **self._analysis_config_status(),
                 }
                 logger.warning("failed to open camera stream: %s", source)
                 await asyncio.sleep(self.reconnect_sec)
@@ -451,6 +499,7 @@ class CameraReader:
                 "source": source,
                 "requested_resolution": _resolution_payload(resolution),
                 "actual_resolution": _capture_resolution(cap),
+                **self._analysis_config_status(),
             }
             try:
                 loop = asyncio.get_running_loop()
@@ -466,17 +515,21 @@ class CameraReader:
                             "requested_resolution": _resolution_payload(resolution),
                             "actual_resolution": _capture_resolution(cap),
                             "error": "camera stream read failed",
+                            **self._analysis_config_status(),
                         }
                         logger.warning("camera stream read failed, reconnecting")
                         break
                     self._frame_id += 1
-                    await frame_buffer.put(
-                        Frame(
-                            frame_id=self._frame_id,
-                            timestamp=utc_timestamp(),
-                            image=image,
-                            source=source,
-                        )
+                    frame = Frame(
+                        frame_id=self._frame_id,
+                        timestamp=utc_timestamp(),
+                        image=image,
+                        source=source,
+                    )
+                    await self._publish_frame(
+                        frame,
+                        preview_frame_buffer,
+                        analysis_frame_buffer,
                     )
                     self.status = {
                         "connected": True,
@@ -484,6 +537,9 @@ class CameraReader:
                         "requested_resolution": _resolution_payload(resolution),
                         "actual_resolution": _actual_resolution_from_image(image),
                         "frame_id": self._frame_id,
+                        "preview_frame_id": self._frame_id,
+                        "analysis_frame_id": self._last_analysis_frame_id,
+                        **self._analysis_config_status(),
                     }
                     if min_delay:
                         await asyncio.sleep(min_delay)
@@ -493,11 +549,70 @@ class CameraReader:
                 continue
             await asyncio.sleep(self.reconnect_sec)
 
+    def _analysis_config_status(self) -> dict[str, Any]:
+        return {
+            "analysis_fps_limit": self.analysis_fps_limit if self.analysis_fps_limit > 0 else None,
+            "analysis_max_side": self.analysis_max_side if self.analysis_max_side else None,
+        }
+
+    async def _clear_frame_buffers(
+        self,
+        preview_frame_buffer: FrameBuffer,
+        analysis_frame_buffer: FrameBuffer | None,
+    ) -> None:
+        await preview_frame_buffer.clear()
+        if analysis_frame_buffer is not None and analysis_frame_buffer is not preview_frame_buffer:
+            await analysis_frame_buffer.clear()
+
+    def _should_publish_analysis_frame(self) -> bool:
+        if self.analysis_fps_limit <= 0:
+            return True
+        now = time.monotonic()
+        if now - self._last_analysis_frame_at < 1.0 / self.analysis_fps_limit:
+            return False
+        self._last_analysis_frame_at = now
+        return True
+
+    async def _publish_frame(
+        self,
+        frame: Frame,
+        preview_frame_buffer: FrameBuffer,
+        analysis_frame_buffer: FrameBuffer | None,
+    ) -> Frame | None:
+        await preview_frame_buffer.put(frame)
+        if analysis_frame_buffer is None or analysis_frame_buffer is preview_frame_buffer:
+            self._last_analysis_frame_id = frame.frame_id
+            return frame
+        if not self._should_publish_analysis_frame():
+            return None
+
+        image = frame.image
+        if self.analysis_max_side and max(frame.image.shape[:2]) > self.analysis_max_side:
+            image = await asyncio.to_thread(
+                _resize_to_max_side,
+                frame.image,
+                self.analysis_max_side,
+            )
+        analysis_frame = (
+            frame
+            if image is frame.image
+            else Frame(
+                frame_id=frame.frame_id,
+                timestamp=frame.timestamp,
+                image=image,
+                source=frame.source,
+            )
+        )
+        await analysis_frame_buffer.put(analysis_frame)
+        self._last_analysis_frame_id = analysis_frame.frame_id
+        return analysis_frame
+
     async def _run_avfoundation_source(
         self,
         source: str,
         resolution: tuple[int, int] | None,
-        frame_buffer: FrameBuffer,
+        preview_frame_buffer: FrameBuffer,
+        analysis_frame_buffer: FrameBuffer | None,
         min_delay: float,
     ) -> None:
         index = _parse_avfoundation_source(source)
@@ -507,6 +622,7 @@ class CameraReader:
                 "source": source,
                 "requested_resolution": _resolution_payload(resolution),
                 "error": "invalid avfoundation source",
+                **self._analysis_config_status(),
             }
             await asyncio.sleep(self.reconnect_sec)
             return
@@ -516,6 +632,7 @@ class CameraReader:
                 "source": source,
                 "requested_resolution": _resolution_payload(resolution),
                 "error": "ffmpeg is required for avfoundation camera sources",
+                **self._analysis_config_status(),
             }
             await asyncio.sleep(self.reconnect_sec)
             return
@@ -533,6 +650,7 @@ class CameraReader:
                 "source": source,
                 "backend": "ffmpeg-avfoundation",
                 "requested_resolution": _resolution_payload(resolution),
+                **self._analysis_config_status(),
             }
             while True:
                 if self._switch_event.is_set() or await self.get_source() != source:
@@ -546,25 +664,33 @@ class CameraReader:
                         "backend": "ffmpeg-avfoundation",
                         "requested_resolution": _resolution_payload(resolution),
                         "error": await stream.error_summary(),
+                        **self._analysis_config_status(),
                     }
                     logger.warning("avfoundation stream read failed: %s", self.status["error"])
                     break
+                self._frame_id += 1
+                frame = Frame(
+                    frame_id=self._frame_id,
+                    timestamp=utc_timestamp(),
+                    image=image,
+                    source=source,
+                )
+                await self._publish_frame(
+                    frame,
+                    preview_frame_buffer,
+                    analysis_frame_buffer,
+                )
                 self.status = {
                     "connected": True,
                     "source": source,
                     "backend": "ffmpeg-avfoundation",
                     "requested_resolution": _resolution_payload(resolution),
                     "actual_resolution": _actual_resolution_from_image(image),
+                    "frame_id": self._frame_id,
+                    "preview_frame_id": self._frame_id,
+                    "analysis_frame_id": self._last_analysis_frame_id,
+                    **self._analysis_config_status(),
                 }
-                self._frame_id += 1
-                await frame_buffer.put(
-                    Frame(
-                        frame_id=self._frame_id,
-                        timestamp=utc_timestamp(),
-                        image=image,
-                        source=source,
-                    )
-                )
                 if min_delay:
                     await asyncio.sleep(min_delay)
         finally:
@@ -576,23 +702,28 @@ class CameraReader:
         self,
         source: str,
         resolution: tuple[int, int] | None,
-        frame_buffer: FrameBuffer,
+        preview_frame_buffer: FrameBuffer,
+        analysis_frame_buffer: FrameBuffer | None,
         min_delay: float,
     ) -> None:
         stream = _FfmpegNetworkVideoStream(
             source=source,
             resolution=resolution,
+            output_fps=self.fps_limit if self.fps_limit > 0 else None,
             executor=self._io_executor,
         )
         backend = "ffmpeg-rtmp" if is_rtmp_source(source) else "ffmpeg-network"
         try:
             await stream.start()
+            missed_reads = 0
             self.status = {
                 "connected": False,
                 "source": source,
                 "backend": backend,
                 "source_type": "stream",
+                "output_fps": self.fps_limit if self.fps_limit > 0 else None,
                 "requested_resolution": _resolution_payload(resolution),
+                **self._analysis_config_status(),
             }
             while True:
                 if self._switch_event.is_set() or await self.get_source() != source:
@@ -600,35 +731,60 @@ class CameraReader:
                     break
                 image = await stream.read_frame(timeout_sec=max(5.0, self.reconnect_sec))
                 if image is None:
+                    missed_reads += 1
+                    if stream.is_running():
+                        self.status = {
+                            "connected": True,
+                            "source": source,
+                            "backend": backend,
+                            "source_type": "stream",
+                            "status": "waiting_for_frame",
+                            "output_fps": self.fps_limit if self.fps_limit > 0 else None,
+                            "requested_resolution": _resolution_payload(resolution),
+                            "missed_reads": missed_reads,
+                            **self._analysis_config_status(),
+                        }
+                        await asyncio.sleep(0.05)
+                        continue
                     self.status = {
                         "connected": False,
                         "source": source,
                         "backend": backend,
                         "source_type": "stream",
+                        "output_fps": self.fps_limit if self.fps_limit > 0 else None,
                         "requested_resolution": _resolution_payload(resolution),
                         "error": await stream.error_summary(),
+                        **self._analysis_config_status(),
                     }
                     logger.warning("network stream read failed: %s", self.status["error"])
                     break
+                missed_reads = 0
                 self._frame_id += 1
+                frame = Frame(
+                    frame_id=self._frame_id,
+                    timestamp=utc_timestamp(),
+                    image=image,
+                    source=source,
+                )
+                await self._publish_frame(
+                    frame,
+                    preview_frame_buffer,
+                    analysis_frame_buffer,
+                )
                 self.status = {
                     "connected": True,
                     "source": source,
                     "backend": backend,
                     "source_type": "stream",
+                    "output_fps": self.fps_limit if self.fps_limit > 0 else None,
                     "requested_resolution": _resolution_payload(resolution),
                     "actual_resolution": _actual_resolution_from_image(image),
                     "frame_id": self._frame_id,
+                    "preview_frame_id": self._frame_id,
+                    "analysis_frame_id": self._last_analysis_frame_id,
+                    **self._analysis_config_status(),
                 }
-                await frame_buffer.put(
-                    Frame(
-                        frame_id=self._frame_id,
-                        timestamp=utc_timestamp(),
-                        image=image,
-                        source=source,
-                    )
-                )
-                if min_delay:
+                if min_delay and stream.output_fps is None:
                     await asyncio.sleep(min_delay)
         finally:
             await stream.close()
@@ -640,21 +796,28 @@ class CameraReader:
         *,
         source: str,
         image: np.ndarray,
-        frame_buffer: FrameBuffer,
+        preview_frame_buffer: FrameBuffer,
+        analysis_frame_buffer: FrameBuffer | None = None,
     ) -> bool:
         if not is_browser_source(source) or await self.get_source() != source:
             return False
         self._frame_id += 1
-        await frame_buffer.put(
-            Frame(frame_id=self._frame_id, timestamp=utc_timestamp(), image=image, source=source)
+        frame = Frame(frame_id=self._frame_id, timestamp=utc_timestamp(), image=image, source=source)
+        await self._publish_frame(
+            frame,
+            preview_frame_buffer,
+            analysis_frame_buffer,
         )
         self.status = {
             "connected": True,
             "source": source,
             "backend": "browser-get-user-media",
             "frame_id": self._frame_id,
+            "preview_frame_id": self._frame_id,
+            "analysis_frame_id": self._last_analysis_frame_id,
             "requested_resolution": await self.get_resolution(),
             "actual_resolution": _actual_resolution_from_image(image),
+            **self._analysis_config_status(),
         }
         return True
 
@@ -689,15 +852,15 @@ class _FfmpegMjpegPipe:
         except TimeoutError:
             return None
 
+    def is_running(self) -> bool:
+        return self.process is not None and self.process.returncode is None
+
     async def _read_frame(self) -> np.ndarray | None:
         if self.process is None or self.process.stdout is None:
             return None
         while True:
-            start = self._buffer.find(b"\xff\xd8")
-            end = self._buffer.find(b"\xff\xd9", start + 2 if start >= 0 else 0)
-            if start >= 0 and end >= 0:
-                frame_bytes = bytes(self._buffer[start : end + 2])
-                del self._buffer[: end + 2]
+            frame_bytes = self._pop_latest_frame_bytes()
+            if frame_bytes is not None:
                 loop = asyncio.get_running_loop()
                 image = await loop.run_in_executor(
                     self.executor,
@@ -713,6 +876,32 @@ class _FfmpegMjpegPipe:
             if not chunk:
                 return None
             self._buffer.extend(chunk)
+
+    def _pop_latest_frame_bytes(self) -> bytes | None:
+        latest_frame: bytes | None = None
+        latest_end = 0
+        search_from = 0
+        while True:
+            start = self._buffer.find(b"\xff\xd8", search_from)
+            if start < 0:
+                if latest_frame is not None:
+                    del self._buffer[:latest_end]
+                elif len(self._buffer) > 1:
+                    del self._buffer[:-1]
+                return latest_frame
+
+            end = self._buffer.find(b"\xff\xd9", start + 2)
+            if end < 0:
+                if latest_frame is not None:
+                    del self._buffer[:latest_end]
+                    return latest_frame
+                if start > 0:
+                    del self._buffer[:start]
+                return None
+
+            latest_end = end + 2
+            latest_frame = bytes(self._buffer[start:latest_end])
+            search_from = latest_end
 
     async def _collect_stderr(self) -> None:
         if self.process is None or self.process.stderr is None:
@@ -798,11 +987,13 @@ class _FfmpegNetworkVideoStream(_FfmpegMjpegPipe):
         *,
         source: str,
         resolution: tuple[int, int] | None,
+        output_fps: float | None,
         executor: concurrent.futures.Executor,
     ) -> None:
         super().__init__(source_name="ffmpeg network stream", executor=executor)
         self.source = source
         self.resolution = resolution
+        self.output_fps = output_fps
 
     async def start(self) -> None:
         cmd = [
@@ -833,9 +1024,9 @@ class _FfmpegNetworkVideoStream(_FfmpegMjpegPipe):
                 "-an",
             ]
         )
-        scale_filter = self._scale_filter()
-        if scale_filter is not None:
-            cmd.extend(["-vf", scale_filter])
+        video_filter = self._video_filter()
+        if video_filter is not None:
+            cmd.extend(["-vf", video_filter])
         cmd.extend(
             [
                 "-q:v",
@@ -849,11 +1040,14 @@ class _FfmpegNetworkVideoStream(_FfmpegMjpegPipe):
         )
         await self._start_command(cmd)
 
-    def _scale_filter(self) -> str | None:
-        if self.resolution is None:
-            return None
-        width, height = self.resolution
-        return (
-            f"scale=w={width}:h={height}:"
-            "force_original_aspect_ratio=decrease:force_divisible_by=2"
-        )
+    def _video_filter(self) -> str | None:
+        filters: list[str] = []
+        if self.output_fps is not None:
+            filters.append(f"fps=fps={_format_ffmpeg_number(self.output_fps)}")
+        if self.resolution is not None:
+            width, height = self.resolution
+            filters.append(
+                f"scale=w={width}:h={height}:"
+                "force_original_aspect_ratio=decrease:force_divisible_by=2"
+            )
+        return ",".join(filters) if filters else None

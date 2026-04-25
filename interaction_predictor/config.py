@@ -49,6 +49,8 @@ class Settings:
     camera_width: int | None = None
     camera_height: int | None = None
     stream_fps: float = 20.0
+    analysis_fps_limit: float = 8.0
+    analysis_max_side: int = 640
 
     llm_provider: str = "kimi"
     llm_timeout_sec: float = 120.0
@@ -113,6 +115,8 @@ class Settings:
             camera_width=_env_optional_int("CAMERA_WIDTH"),
             camera_height=_env_optional_int("CAMERA_HEIGHT"),
             stream_fps=_env_float("STREAM_FPS", defaults.stream_fps),
+            analysis_fps_limit=_env_float("ANALYSIS_FPS_LIMIT", defaults.analysis_fps_limit),
+            analysis_max_side=_env_int("ANALYSIS_MAX_SIDE", defaults.analysis_max_side),
             llm_provider=os.getenv("LLM_PROVIDER", defaults.llm_provider).lower(),
             llm_timeout_sec=_env_float("LLM_TIMEOUT_SEC", defaults.llm_timeout_sec),
             kimi_base_url=normalize_base_url(kimi_base_url, default_scheme="https"),
@@ -197,6 +201,8 @@ class Settings:
             camera_width=self.camera_width,
             camera_height=self.camera_height,
             stream_fps=self.stream_fps,
+            analysis_fps_limit=self.analysis_fps_limit,
+            analysis_max_side=self.analysis_max_side,
             llm_provider=llm_provider.lower() if llm_provider is not None else self.llm_provider,
             llm_timeout_sec=self.llm_timeout_sec,
             kimi_base_url=self.kimi_base_url,

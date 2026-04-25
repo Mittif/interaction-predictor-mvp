@@ -14,7 +14,9 @@
 
 ## 核心思路
 
-系统把同一段视频流拆成两条不同频率的分析链路：
+系统把同一段视频流先拆成预览帧和分析帧：预览帧优先服务控制台实时画面，分析帧按 `ANALYSIS_FPS_LIMIT` 限流并按 `ANALYSIS_MAX_SIDE` 缩小后再进入推理链路。这样播放画面不会跟着 YOLO、场景理解和大模型调用一起卡顿。
+
+分析侧再拆成两条不同频率的链路：
 
 1. 全局场景链路：每隔 `SCENE_INTERVAL_SEC` 秒取一帧全图，压缩后直接传给 Kimi 多模态模型，得到当前环境、主要事物和场景推测，并写入 `data/scenes.jsonl`。
 2. 中心兴趣物链路：用 YOLO 高频检测画面里的物体，优先选择靠近画面中心、面积和置信度合理的目标，抽象为“用户当前视野关注点”。
@@ -32,13 +34,14 @@
 ```mermaid
 flowchart LR
   Camera["Camera / RTMP / RTSP / HTTP / demo.mp4"] --> Reader["CameraReader"]
-  Reader --> Buffer["FrameBuffer"]
-  Buffer --> Stream["MJPEG /stream.mjpg"]
+  Reader --> PreviewBuffer["Preview FrameBuffer"]
+  Reader --> AnalysisBuffer["Analysis FrameBuffer<br/>fps limit + resize"]
+  PreviewBuffer --> Stream["MJPEG /stream.mjpg"]
   Stream --> UI["Web Console"]
-  Buffer --> SceneWorker["GlobalSceneWorker<br/>low frequency"]
+  AnalysisBuffer --> SceneWorker["GlobalSceneWorker<br/>low frequency"]
   SceneWorker --> KimiVision["Kimi Vision"]
   KimiVision --> SceneStore["data/scenes.jsonl"]
-  Buffer --> YoloWorker["YOLO Worker<br/>high frequency"]
+  AnalysisBuffer --> YoloWorker["YOLO Worker<br/>high frequency"]
   YoloWorker --> InterestState["InterestObjectState"]
   SceneStore --> InteractionWorker["InteractionWorker"]
   InterestState --> InteractionWorker
@@ -155,6 +158,8 @@ CAMERA_PROBE_COUNT=6
 CAMERA_FPS_LIMIT=30
 CAMERA_WIDTH=640
 CAMERA_HEIGHT=480
+ANALYSIS_FPS_LIMIT=8
+ANALYSIS_MAX_SIDE=640
 OPENCV_AVFOUNDATION_SKIP_AUTH=0
 
 SCENE_INPUT_MODE=image
@@ -212,18 +217,22 @@ CAMERA_URL=rtmp://Mittys-MacBook-Pro.local:1935/live/index python -m interaction
 POST /camera/source {"source":"rtmp://Mittys-MacBook-Pro.local:1935/live/index"}
 ```
 
-检测到 HLS/HTTP/RTSP/RTMP/RTMPS 输入时，后端会优先使用本机 `ffmpeg` 拉流并把视频帧送入同一个分析缓冲；未安装 `ffmpeg` 时会回退到 OpenCV 的 `VideoCapture`。如果请求了分辨率，ffmpeg 网络流链路会在输出帧前执行 `scale`，例如页面选择 `640 x 480` 时，16:9 直播流通常会输出 `640 x 360` 的分析帧，从源头减少后续解码、复制和 YOLO 推理成本。
+检测到 HLS/HTTP/RTSP/RTMP/RTMPS 输入时，后端会优先使用本机 `ffmpeg` 拉流，把视频帧先写入预览缓冲，再按分析限流和缩放规则写入分析缓冲；未安装 `ffmpeg` 时会回退到 OpenCV 的 `VideoCapture`。如果请求了分辨率，ffmpeg 网络流链路会在输出帧前执行 `scale`，例如页面选择 `640 x 480` 时，16:9 直播流通常会输出 `640 x 360` 的预览帧和分析候选帧，从源头减少后续解码、复制和 YOLO 推理成本。
 
 RTMP 低延迟建议先用这组配置测试：
 
 ```bash
 CAMERA_FPS_LIMIT=30
 STREAM_FPS=20
+ANALYSIS_FPS_LIMIT=8
+ANALYSIS_MAX_SIDE=640
 CAMERA_WIDTH=640
 CAMERA_HEIGHT=480
 YOLO_IMAGE_SIZE=416
 YOLO_FPS=5
 ```
+
+其中 `CAMERA_FPS_LIMIT` 更接近摄取和预览上限，`STREAM_FPS` 是 MJPEG 输出上限；`ANALYSIS_FPS_LIMIT` 只限制进入 YOLO/场景理解的帧，`ANALYSIS_MAX_SIDE` 只缩放分析帧，不会降低控制台预览帧本身的分辨率。预测链路慢或机器资源紧张时，优先把 `ANALYSIS_FPS_LIMIT` 调到 `5` 左右、把 `ANALYSIS_MAX_SIDE` 调到 `512` 或 `416`。
 
 分辨率 API：
 
@@ -265,7 +274,7 @@ GET /snapshot
 GET /stream.mjpg
 ```
 
-前端主画面使用 `GET /stream.mjpg` 持续显示 MJPEG 实时流，MJPEG 编码会放到独立预览线程池执行，和大模型推理、历史查询刷新解耦。`GET /snapshot` 只用于单帧调试。
+前端主画面使用 `GET /stream.mjpg` 持续显示 MJPEG 实时流，读取的是独立预览缓冲；MJPEG 编码会放到独立预览线程池执行，和 YOLO、场景理解、大模型推理、历史查询刷新解耦。`GET /snapshot` 也读取预览缓冲，只用于单帧调试。
 
 `GET /latest-first-person-analysis` 读取 `data/first_person_analyses.jsonl` 中最近一次第一人称分析；自动 worker 和 `POST /first-person-analysis` 都会写入这个文件。`POST /first-person-analysis` 会按需调用大模型，使用最新场景和当前稳定中心兴趣物，返回实际发送给大模型的 `prompt`、`raw_llm_output` 和标准化后的 `prediction`。设置 `persist=true` 时会写入独立的第一人称分析历史。
 

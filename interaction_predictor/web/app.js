@@ -24,6 +24,7 @@ const state = {
 
 const browserPermissionSource = "browser:request";
 const networkStreamSchemes = ["rtmp://", "rtmps://", "rtsp://", "http://", "https://"];
+const browserFrameIntervalMs = 100;
 
 function $(id) {
   return document.getElementById(id);
@@ -388,7 +389,7 @@ async function startBrowserCapture(source) {
     postBrowserFrame(source).catch((error) => {
       $("cameraSourceMeta").textContent = `浏览器帧上传失败: ${error.message}`;
     });
-  }, 250);
+  }, browserFrameIntervalMs);
   await postBrowserFrame(source);
 }
 

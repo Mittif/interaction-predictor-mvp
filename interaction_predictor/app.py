@@ -57,6 +57,7 @@ class BrowserFrameRequest(BaseModel):
 class Runtime:
     settings: Settings
     frame_buffer: FrameBuffer
+    preview_frame_buffer: FrameBuffer
     camera_reader: CameraReader
     object_state: InterestObjectState
     yolo_worker: YoloWorker
@@ -79,7 +80,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         runtime = _build_runtime(settings)
         app.state.runtime = runtime
         runtime.tasks = [
-            asyncio.create_task(runtime.camera_reader.run(runtime.frame_buffer), name="camera"),
+            asyncio.create_task(
+                runtime.camera_reader.run(
+                    runtime.preview_frame_buffer,
+                    analysis_frame_buffer=runtime.frame_buffer,
+                ),
+                name="camera",
+            ),
             asyncio.create_task(runtime.yolo_worker.run(runtime.frame_buffer), name="yolo"),
             asyncio.create_task(
                 runtime.scene_worker.run(runtime.frame_buffer),
@@ -117,17 +124,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, Any]:
         runtime = _runtime(app)
-        frame = await runtime.frame_buffer.latest()
+        analysis_frame = await runtime.frame_buffer.latest()
+        preview_frame = await runtime.preview_frame_buffer.latest()
         return {
             "ok": True,
             "camera": runtime.camera_reader.status,
             "latest_frame": (
                 {
-                    "frame_id": frame.frame_id,
-                    "timestamp": frame.timestamp,
-                    "source": frame.source,
+                    "frame_id": analysis_frame.frame_id,
+                    "timestamp": analysis_frame.timestamp,
+                    "source": analysis_frame.source,
                 }
-                if frame
+                if analysis_frame
+                else None
+            ),
+            "latest_preview_frame": (
+                {
+                    "frame_id": preview_frame.frame_id,
+                    "timestamp": preview_frame.timestamp,
+                    "source": preview_frame.source,
+                }
+                if preview_frame
                 else None
             ),
             "yolo": runtime.object_state.health,
@@ -142,6 +159,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "camera_height": runtime.settings.camera_height,
                 "camera_resolution": await runtime.camera_reader.get_resolution(),
                 "stream_fps": runtime.settings.stream_fps,
+                "analysis_fps_limit": runtime.settings.analysis_fps_limit,
+                "analysis_max_side": runtime.settings.analysis_max_side,
                 "llm_provider": runtime.settings.llm_provider,
                 "llm_model": runtime.settings.active_model,
                 "kimi_base_url": runtime.settings.kimi_base_url,
@@ -317,7 +336,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         accepted = await runtime.camera_reader.ingest_browser_frame(
             source=request.source.strip(),
             image=image,
-            frame_buffer=runtime.frame_buffer,
+            preview_frame_buffer=runtime.preview_frame_buffer,
+            analysis_frame_buffer=runtime.frame_buffer,
         )
         return {"ok": accepted, "accepted": accepted, "source": request.source.strip()}
 
@@ -339,7 +359,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/snapshot")
     async def snapshot() -> Response:
-        frame = await _runtime(app).frame_buffer.latest()
+        frame = await _runtime(app).preview_frame_buffer.latest()
         if frame is None:
             return Response(status_code=404, content=b"no frame available")
         content = await asyncio.to_thread(frame_to_jpeg_bytes, frame.image)
@@ -369,7 +389,7 @@ async def _mjpeg_frame_generator(runtime: Runtime, *, fps: float):
     loop = asyncio.get_running_loop()
     while True:
         started_at = time.monotonic()
-        frame = await runtime.frame_buffer.latest()
+        frame = await runtime.preview_frame_buffer.latest()
         if frame is None or frame.frame_id == last_frame_id:
             await asyncio.sleep(0.03)
             continue
@@ -443,6 +463,7 @@ def _runtime(app: FastAPI) -> Runtime:
 
 def _build_runtime(settings: Settings) -> Runtime:
     frame_buffer = FrameBuffer(max_size=30)
+    preview_frame_buffer = FrameBuffer(max_size=5)
     preview_executor = concurrent.futures.ThreadPoolExecutor(
         max_workers=1,
         thread_name_prefix="mjpeg-preview",
@@ -474,11 +495,14 @@ def _build_runtime(settings: Settings) -> Runtime:
     return Runtime(
         settings=settings,
         frame_buffer=frame_buffer,
+        preview_frame_buffer=preview_frame_buffer,
         camera_reader=CameraReader(
             source=settings.camera_url,
             fps_limit=settings.camera_fps_limit,
             reconnect_sec=settings.camera_reconnect_sec,
             resolution=settings.camera_resolution,
+            analysis_fps_limit=settings.analysis_fps_limit,
+            analysis_max_side=settings.analysis_max_side,
         ),
         object_state=object_state,
         yolo_worker=yolo_worker,
@@ -508,6 +532,7 @@ def _build_yolo_worker(settings: Settings, object_state: InterestObjectState) ->
 async def _reset_observation_state(runtime: Runtime) -> None:
     runtime.observation_generation += 1
     await runtime.frame_buffer.clear()
+    await runtime.preview_frame_buffer.clear()
     await runtime.object_state.reset()
     runtime.yolo_worker.reset()
     runtime.scene_worker.reset()
