@@ -14,3 +14,6 @@ runs/
 runtime/
 tmp/
 *.pt
+
+quest-portal-package/certs/*.pem
+quest-portal-package/logs/

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quest Portal Hub</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="stage" aria-label="Quest Portal Hub">
+        <canvas id="stageCanvas"></canvas>
+        <div class="hud">
+          <div class="brand">
+            <span class="mark"></span>
+            <div>
+              <p>Quest Portal Hub</p>
+              <h1>Home Stage</h1>
+            </div>
+          </div>
+          <div class="status-strip">
+            <div>
+              <span>Input</span>
+              <strong id="inputStatus">connecting</strong>
+            </div>
+            <div>
+              <span>Decision</span>
+              <strong id="decisionStatus">waiting</strong>
+            </div>
+            <div>
+              <span>Portal</span>
+              <strong id="portalStatus">closed</strong>
+            </div>
+          </div>
+        </div>
+
+        <aside class="control-panel" aria-label="Portal controls">
+          <div class="panel-head">
+            <p>Live Routing</p>
+            <button id="refreshButton" type="button">刷新</button>
+          </div>
+          <div class="scene-card active" id="activeScene">
+            <span id="activeSceneLabel">等待输入</span>
+            <h2 id="activeSceneTitle">No portal</h2>
+            <p id="activeSceneDescription">等待 first_person_analyses.jsonl 写入新的分析结果。</p>
+            <button id="enterButton" type="button" disabled>进入传送门</button>
+          </div>
+          <div class="scores" id="scoreList"></div>
+          <pre id="analysisPreview">{}</pre>
+        </aside>
+      </section>
+    </main>
+    <script type="module" src="/js/home-stage.js?v=portal-world-2"></script>
+  </body>
+</html>

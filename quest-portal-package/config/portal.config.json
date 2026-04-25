@@ -1,0 +1,93 @@
+{
+  "name": "Quest Portal Hub",
+  "inputFile": "/Users/mitty/Documents/GitHub/interaction-predictor-mvp/data/first_person_analyses.jsonl",
+  "predictorHealthUrl": "http://localhost:8000/health",
+  "pollMs": 1500,
+  "fallbackSceneId": "cinema",
+  "homeStage": {
+    "title": "Home Stage",
+    "subtitle": "Waiting for first-person interaction analysis",
+    "portalActivationDistance": 0.75
+  },
+  "scenes": [
+    {
+      "id": "cinema",
+      "title": "Cinema",
+      "label": "影院",
+      "kind": "local",
+      "url": "/scenes/cinema.html",
+      "description": "本地集成 stereo-video 风格的沉浸式观影空间，使用本地视频文件并保留 Quest 手柄交互与返回 Home。",
+      "media": {
+        "videoUrl": "/media/cinema-demo.mp4"
+      },
+      "portal": {
+        "color": "#7dd3fc",
+        "accent": "#f8fafc",
+        "position": [0, 1.32, -2.55]
+      },
+      "rules": [
+        {
+          "weight": 6,
+          "terms": ["cinema", "movie", "theater", "stereo video", "观影", "影院", "电影院", "电影", "屏幕", "银幕"]
+        },
+        {
+          "weight": 4,
+          "terms": ["auditorium", "lecture_hall", "lecture hall", "礼堂", "报告厅", "阶梯教室", "阶梯式座位"]
+        },
+        {
+          "weight": 2,
+          "terms": ["昏暗", "长时间停留", "观看", "座位", "大屏"]
+        }
+      ]
+    },
+    {
+      "id": "garage-ktv",
+      "title": "Family KTV Audio",
+      "label": "家庭 KTV",
+      "kind": "local",
+      "url": "/scenes/garage-ktv.html",
+      "description": "本地集成 positional-audio 风格的家庭 KTV/车库空间音频场景，使用本地音乐文件并保留 Quest 手柄交互与返回 Home。",
+      "media": {
+        "audioUrl": "/media/garage-ktv-loop.wav"
+      },
+      "portal": {
+        "color": "#f97316",
+        "accent": "#fde68a",
+        "position": [-1.45, 1.24, -2.15]
+      },
+      "rules": [
+        {
+          "weight": 7,
+          "terms": ["garage", "ktv", "karaoke", "sing", "microphone", "车库", "家庭ktv", "家庭 KTV", "唱歌", "麦克风", "音响"]
+        },
+        {
+          "weight": 3,
+          "terms": ["car", "vehicle", "sofa", "home", "family", "汽车", "车辆", "沙发", "家庭", "聚会", "音乐"]
+        }
+      ]
+    },
+    {
+      "id": "arcade-slingshot",
+      "title": "Gemini Slingshot",
+      "label": "游戏厅",
+      "kind": "local",
+      "url": "/game/",
+      "description": "进入你制作好的 Gemini Slingshot 游戏厅场景，支持 Quest WebXR 手柄玩法。",
+      "portal": {
+        "color": "#a78bfa",
+        "accent": "#22c55e",
+        "position": [1.45, 1.24, -2.15]
+      },
+      "rules": [
+        {
+          "weight": 8,
+          "terms": ["arcade", "game", "slingshot", "bubble", "shoot", "游戏厅", "游戏", "游玩", "弹弓", "射击", "电玩城"]
+        },
+        {
+          "weight": 4,
+          "terms": ["controller", "hands", "handheld", "手柄", "把玩", "操作", "互动"]
+        }
+      ]
+    }
+  ]
+}

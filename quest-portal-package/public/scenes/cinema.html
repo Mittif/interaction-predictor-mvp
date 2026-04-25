@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cinema Portal Scene</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="preload" href="/media/cinema-demo.mp4" as="video" type="video/mp4" />
+    <style>
+      body {
+        overflow: hidden;
+        background: #050505;
+      }
+
+      .cinema-hud {
+        position: fixed;
+        left: 24px;
+        right: 24px;
+        top: 22px;
+        z-index: 3;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        pointer-events: none;
+      }
+
+      .cinema-card {
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 12px;
+        background: rgba(7, 7, 7, 0.78);
+        padding: 14px 16px;
+        backdrop-filter: blur(18px);
+      }
+
+      .cinema-card p {
+        margin: 0 0 3px;
+        color: #aaa396;
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+
+      .cinema-card h1 {
+        margin: 0;
+        font-size: 22px;
+      }
+
+      .cinema-actions {
+        display: flex;
+        gap: 10px;
+        pointer-events: auto;
+      }
+
+      #cinemaVideo {
+        display: none;
+      }
+
+      body.xr-active .cinema-hud {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="stageCanvas"></canvas>
+    <video id="cinemaVideo" src="/media/cinema-demo.mp4" preload="auto" playsinline loop crossorigin="anonymous"></video>
+    <div class="cinema-hud">
+      <div class="cinema-card">
+        <p>Local Scene</p>
+        <h1>Cinema</h1>
+      </div>
+      <div class="cinema-actions">
+        <button id="homeButton" type="button">返回 Home</button>
+        <button id="playButton" type="button">播放</button>
+        <button id="muteButton" type="button">静音</button>
+      </div>
+    </div>
+    <script type="module" src="/scenes/cinema.js?v=local-xr-2"></script>
+  </body>
+</html>

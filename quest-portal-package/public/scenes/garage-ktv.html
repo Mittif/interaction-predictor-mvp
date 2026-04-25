@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Garage KTV</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      .garage-hud {
+        position: fixed;
+        left: 24px;
+        right: 24px;
+        top: 22px;
+        z-index: 3;
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        pointer-events: none;
+      }
+
+      .garage-card {
+        max-width: 420px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 12px;
+        background: rgba(22, 21, 19, 0.78);
+        padding: 14px 16px;
+        backdrop-filter: blur(18px);
+      }
+
+      .garage-card p {
+        margin: 0 0 5px;
+        color: #aaa396;
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+
+      .garage-card h1 {
+        margin: 0;
+        font-size: 22px;
+      }
+
+      .garage-actions {
+        display: flex;
+        gap: 10px;
+        pointer-events: auto;
+      }
+
+      body.xr-active .garage-hud {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="stageCanvas"></canvas>
+    <div class="garage-hud">
+      <div class="garage-card">
+        <p>Local Scene</p>
+        <h1>Garage KTV</h1>
+      </div>
+      <div class="garage-actions">
+        <button id="homeButton" type="button">返回 Home</button>
+        <button id="songButton" type="button">换歌</button>
+        <button id="lightButton" type="button">灯光</button>
+        <button id="musicButton" type="button">音乐</button>
+      </div>
+    </div>
+    <script type="module" src="/scenes/garage-ktv.js?v=spatial-audio-2"></script>
+  </body>
+</html>

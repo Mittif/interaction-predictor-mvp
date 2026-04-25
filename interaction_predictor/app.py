@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import concurrent.futures
 import logging
+import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +66,7 @@ class Runtime:
     prediction_store: JsonlStore
     first_person_analysis_store: JsonlStore
     llm: JsonLlmClient
+    preview_executor: concurrent.futures.ThreadPoolExecutor
     tasks: list[asyncio.Task[Any]]
     observation_generation: int = 0
 
@@ -93,6 +97,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 task.cancel()
             await asyncio.gather(*runtime.tasks, return_exceptions=True)
             await runtime.llm.close()
+            runtime.camera_reader.close()
+            runtime.preview_executor.shutdown(wait=False, cancel_futures=True)
             logger.info("interaction predictor stopped")
 
     app = FastAPI(
@@ -305,7 +311,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def ingest_browser_frame(request: BrowserFrameRequest) -> dict[str, Any]:
         runtime = _runtime(app)
         try:
-            image = _decode_browser_frame(request.image)
+            image = await asyncio.to_thread(_decode_browser_frame, request.image)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         accepted = await runtime.camera_reader.ingest_browser_frame(
@@ -336,7 +342,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         frame = await _runtime(app).frame_buffer.latest()
         if frame is None:
             return Response(status_code=404, content=b"no frame available")
-        return Response(content=frame_to_jpeg_bytes(frame.image), media_type="image/jpeg")
+        content = await asyncio.to_thread(frame_to_jpeg_bytes, frame.image)
+        return Response(content=content, media_type="image/jpeg")
 
     @app.get("/stream.mjpg", include_in_schema=False)
     async def stream_mjpg(
@@ -359,14 +366,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 async def _mjpeg_frame_generator(runtime: Runtime, *, fps: float):
     last_frame_id = -1
     delay = 1.0 / max(1.0, min(30.0, fps))
+    loop = asyncio.get_running_loop()
     while True:
+        started_at = time.monotonic()
         frame = await runtime.frame_buffer.latest()
         if frame is None or frame.frame_id == last_frame_id:
             await asyncio.sleep(0.03)
             continue
         last_frame_id = frame.frame_id
         try:
-            jpeg = frame_to_jpeg_bytes(frame.image, quality=82)
+            jpeg = await loop.run_in_executor(
+                runtime.preview_executor,
+                partial(frame_to_jpeg_bytes, frame.image, quality=82),
+            )
         except Exception:  # noqa: BLE001
             logger.exception("failed to encode mjpeg frame")
             await asyncio.sleep(delay)
@@ -381,7 +393,7 @@ async def _mjpeg_frame_generator(runtime: Runtime, *, fps: float):
             + jpeg
             + b"\r\n"
         )
-        await asyncio.sleep(delay)
+        await asyncio.sleep(max(0.0, delay - (time.monotonic() - started_at)))
 
 
 def _task_status(task: asyncio.Task[Any]) -> dict[str, Any]:
@@ -431,6 +443,10 @@ def _runtime(app: FastAPI) -> Runtime:
 
 def _build_runtime(settings: Settings) -> Runtime:
     frame_buffer = FrameBuffer(max_size=30)
+    preview_executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=1,
+        thread_name_prefix="mjpeg-preview",
+    )
     object_state = InterestObjectState()
     scene_store = JsonlStore(settings.storage_dir / "scenes.jsonl")
     prediction_store = JsonlStore(settings.storage_dir / "predictions.jsonl")
@@ -472,6 +488,7 @@ def _build_runtime(settings: Settings) -> Runtime:
         prediction_store=prediction_store,
         first_person_analysis_store=first_person_analysis_store,
         llm=llm,
+        preview_executor=preview_executor,
         tasks=[],
     )
 

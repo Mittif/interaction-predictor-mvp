@@ -41,14 +41,14 @@ def normalize_base_url(base_url: str, *, default_scheme: str = "http") -> str:
 
 @dataclass(slots=True)
 class Settings:
-    camera_url: str = "0"
-    camera_fps_limit: float = 15.0
+    camera_url: str = "rtmp://Mittys-MacBook-Pro.local:1935/live/index"
+    camera_fps_limit: float = 30.0
     camera_reconnect_sec: float = 2.0
     camera_probe_count: int = 6
     camera_demo_video_path: Path = Path("/tmp/interaction-predictor-demo/demo.mp4")
     camera_width: int | None = None
     camera_height: int | None = None
-    stream_fps: float = 10.0
+    stream_fps: float = 20.0
 
     llm_provider: str = "kimi"
     llm_timeout_sec: float = 120.0

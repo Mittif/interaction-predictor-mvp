@@ -149,17 +149,17 @@ KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MODEL=kimi-k2.6
 KIMI_VISION_MODEL=kimi-k2.5
 
-CAMERA_URL=0
+CAMERA_URL=rtmp://Mittys-MacBook-Pro.local:1935/live/index
 CAMERA_DEMO_VIDEO=/tmp/interaction-predictor-demo/demo.mp4
 CAMERA_PROBE_COUNT=6
-CAMERA_FPS_LIMIT=8
+CAMERA_FPS_LIMIT=30
 CAMERA_WIDTH=640
 CAMERA_HEIGHT=480
 OPENCV_AVFOUNDATION_SKIP_AUTH=0
 
 SCENE_INPUT_MODE=image
 SCENE_INTERVAL_SEC=15
-STREAM_FPS=10
+STREAM_FPS=20
 
 YOLO_MODEL=yolo11n.pt
 YOLO_FPS=5
@@ -176,7 +176,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e .
 export MOONSHOT_API_KEY="你的 Kimi API Key"
-python -m interaction_predictor --camera-url 0
+python -m interaction_predictor --camera-url rtmp://Mittys-MacBook-Pro.local:1935/live/index
 ```
 
 回退到本地 Ollama：
@@ -185,7 +185,7 @@ python -m interaction_predictor --camera-url 0
 LLM_PROVIDER=ollama \
 OLLAMA_BASE_URL=http://office.zhoudians.com:41434 \
 OLLAMA_MODEL=qwen3.5:27b \
-python -m interaction_predictor --camera-url 0
+python -m interaction_predictor --camera-url rtmp://Mittys-MacBook-Pro.local:1935/live/index
 ```
 
 ## 摄像头输入源
@@ -196,28 +196,29 @@ python -m interaction_predictor --camera-url 0
 本机摄像头 index：0、1、2...
 macOS AVFoundation：avfoundation:0、avfoundation:1...
 浏览器摄像头：前端里选择“浏览器摄像头授权/检测”后出现
-HTTP/RTSP/RTMP：rtmp://example/live/stream、rtmps://example/live/stream
+HLS/HTTP/RTSP/RTMP：http://example/live/index.m3u8、rtmp://example/live/stream、rtmps://example/live/stream
 本机测试视频：/tmp/interaction-predictor-demo/demo.mp4
 ```
 
-控制台会调用 `GET /camera/sources` 检测本机摄像头和 demo 视频，并可通过 `POST /camera/source` 在线切换，不需要重启服务。页面可直接填写 `rtmp://` 或 `rtmps://` 直播流地址后点击“拉流”，该直播流会作为实时视频输入源进入 YOLO、场景理解和第一人称交互分析链路。页面上的分辨率下拉会随输入源一起提交；后端摄像头会尝试设置 OpenCV/AVFoundation capture resolution，浏览器摄像头会使用 `getUserMedia` 的 `width`/`height` constraints。
+控制台会调用 `GET /camera/sources` 检测本机摄像头和 demo 视频，并可通过 `POST /camera/source` 在线切换，不需要重启服务。页面可直接填写 HLS、HTTP、RTSP、RTMP 或 RTMPS 直播流地址后点击“拉流”，该直播流会作为实时视频输入源进入 YOLO、场景理解和第一人称交互分析链路。页面上的分辨率下拉会随输入源一起提交；后端摄像头会尝试设置 OpenCV/AVFoundation capture resolution，浏览器摄像头会使用 `getUserMedia` 的 `width`/`height` constraints。
 
-RTMP/RTMPS 源也可以通过环境变量或 API 设置：
+HLS/RTMP/RTMPS 源也可以通过环境变量或 API 设置：
 
 ```bash
-CAMERA_URL=rtmp://example/live/stream python -m interaction_predictor
+CAMERA_URL=rtmp://Mittys-MacBook-Pro.local:1935/live/index python -m interaction_predictor
 ```
 
 ```text
-POST /camera/source {"source":"rtmp://example/live/stream"}
+POST /camera/source {"source":"rtmp://Mittys-MacBook-Pro.local:1935/live/index"}
 ```
 
-检测到 RTMP/RTMPS 输入时，后端会优先使用本机 `ffmpeg` 拉流并把视频帧送入同一个分析缓冲；未安装 `ffmpeg` 时会回退到 OpenCV 的 `VideoCapture`。如果请求了分辨率，RTMP/RTMPS 的 ffmpeg 链路会在输出帧前执行 `scale`，例如页面选择 `640 x 480` 时，16:9 直播流通常会输出 `640 x 360` 的分析帧，从源头减少后续解码、复制和 YOLO 推理成本。
+检测到 HLS/HTTP/RTSP/RTMP/RTMPS 输入时，后端会优先使用本机 `ffmpeg` 拉流并把视频帧送入同一个分析缓冲；未安装 `ffmpeg` 时会回退到 OpenCV 的 `VideoCapture`。如果请求了分辨率，ffmpeg 网络流链路会在输出帧前执行 `scale`，例如页面选择 `640 x 480` 时，16:9 直播流通常会输出 `640 x 360` 的分析帧，从源头减少后续解码、复制和 YOLO 推理成本。
 
 RTMP 低延迟建议先用这组配置测试：
 
 ```bash
-CAMERA_FPS_LIMIT=8
+CAMERA_FPS_LIMIT=30
+STREAM_FPS=20
 CAMERA_WIDTH=640
 CAMERA_HEIGHT=480
 YOLO_IMAGE_SIZE=416
@@ -248,7 +249,7 @@ GET /health
 GET /camera/sources
 GET /camera/source
 POST /camera/source {"source":"0","width":1280,"height":720}
-POST /camera/source {"source":"rtmp://example/live/stream"}
+POST /camera/source {"source":"rtmp://Mittys-MacBook-Pro.local:1935/live/index"}
 GET /camera/resolution
 POST /camera/resolution {"width":1280,"height":720}
 POST /camera/browser-frame
@@ -264,7 +265,7 @@ GET /snapshot
 GET /stream.mjpg
 ```
 
-前端主画面使用 `GET /stream.mjpg` 持续显示 MJPEG 实时流，和大模型推理、历史查询刷新解耦。`GET /snapshot` 只用于单帧调试。
+前端主画面使用 `GET /stream.mjpg` 持续显示 MJPEG 实时流，MJPEG 编码会放到独立预览线程池执行，和大模型推理、历史查询刷新解耦。`GET /snapshot` 只用于单帧调试。
 
 `GET /latest-first-person-analysis` 读取 `data/first_person_analyses.jsonl` 中最近一次第一人称分析；自动 worker 和 `POST /first-person-analysis` 都会写入这个文件。`POST /first-person-analysis` 会按需调用大模型，使用最新场景和当前稳定中心兴趣物，返回实际发送给大模型的 `prompt`、`raw_llm_output` 和标准化后的 `prediction`。设置 `persist=true` 时会写入独立的第一人称分析历史。
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ import shutil
 import subprocess
 from collections import deque
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -333,6 +335,13 @@ class CameraReader:
         self._frame_id = 0
         self._source_lock = asyncio.Lock()
         self._switch_event = asyncio.Event()
+        self._io_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="camera-io",
+        )
+
+    def close(self) -> None:
+        self._io_executor.shutdown(wait=False, cancel_futures=True)
 
     async def get_source(self) -> str:
         async with self._source_lock:
@@ -419,7 +428,7 @@ class CameraReader:
                 await self._run_avfoundation_source(source, resolution, frame_buffer, min_delay)
                 continue
 
-            if is_rtmp_source(source) and shutil.which("ffmpeg") is not None:
+            if is_network_stream_source(source) and shutil.which("ffmpeg") is not None:
                 await self._run_ffmpeg_network_source(source, resolution, frame_buffer, min_delay)
                 continue
 
@@ -444,11 +453,12 @@ class CameraReader:
                 "actual_resolution": _capture_resolution(cap),
             }
             try:
+                loop = asyncio.get_running_loop()
                 while True:
                     if self._switch_event.is_set() or await self.get_source() != source:
                         logger.info("switching camera source from %s", source)
                         break
-                    ok, image = await asyncio.to_thread(cap.read)
+                    ok, image = await loop.run_in_executor(self._io_executor, cap.read)
                     if not ok or image is None:
                         self.status = {
                             "connected": False,
@@ -510,7 +520,12 @@ class CameraReader:
             await asyncio.sleep(self.reconnect_sec)
             return
 
-        stream = _FfmpegAvfoundationStream(index=index, fps=30.0, resolution=resolution)
+        stream = _FfmpegAvfoundationStream(
+            index=index,
+            fps=30.0,
+            resolution=resolution,
+            executor=self._io_executor,
+        )
         try:
             await stream.start()
             self.status = {
@@ -564,7 +579,11 @@ class CameraReader:
         frame_buffer: FrameBuffer,
         min_delay: float,
     ) -> None:
-        stream = _FfmpegNetworkVideoStream(source=source, resolution=resolution)
+        stream = _FfmpegNetworkVideoStream(
+            source=source,
+            resolution=resolution,
+            executor=self._io_executor,
+        )
         backend = "ffmpeg-rtmp" if is_rtmp_source(source) else "ffmpeg-network"
         try:
             await stream.start()
@@ -641,8 +660,14 @@ class CameraReader:
 
 
 class _FfmpegMjpegPipe:
-    def __init__(self, *, source_name: str) -> None:
+    def __init__(
+        self,
+        *,
+        source_name: str,
+        executor: concurrent.futures.Executor,
+    ) -> None:
         self.source_name = source_name
+        self.executor = executor
         self.process: asyncio.subprocess.Process | None = None
         self._buffer = bytearray()
         self._stderr = bytearray()
@@ -673,7 +698,15 @@ class _FfmpegMjpegPipe:
             if start >= 0 and end >= 0:
                 frame_bytes = bytes(self._buffer[start : end + 2])
                 del self._buffer[: end + 2]
-                image = cv2.imdecode(np.frombuffer(frame_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+                loop = asyncio.get_running_loop()
+                image = await loop.run_in_executor(
+                    self.executor,
+                    partial(
+                        cv2.imdecode,
+                        np.frombuffer(frame_bytes, dtype=np.uint8),
+                        cv2.IMREAD_COLOR,
+                    ),
+                )
                 if image is not None:
                     return image
             chunk = await self.process.stdout.read(64 * 1024)
@@ -720,8 +753,9 @@ class _FfmpegAvfoundationStream(_FfmpegMjpegPipe):
         index: int,
         fps: float,
         resolution: tuple[int, int] | None,
+        executor: concurrent.futures.Executor,
     ) -> None:
-        super().__init__(source_name="ffmpeg avfoundation source")
+        super().__init__(source_name="ffmpeg avfoundation source", executor=executor)
         self.index = index
         self.fps = fps
         self.resolution = resolution
@@ -759,8 +793,14 @@ class _FfmpegAvfoundationStream(_FfmpegMjpegPipe):
 
 
 class _FfmpegNetworkVideoStream(_FfmpegMjpegPipe):
-    def __init__(self, *, source: str, resolution: tuple[int, int] | None) -> None:
-        super().__init__(source_name="ffmpeg network stream")
+    def __init__(
+        self,
+        *,
+        source: str,
+        resolution: tuple[int, int] | None,
+        executor: concurrent.futures.Executor,
+    ) -> None:
+        super().__init__(source_name="ffmpeg network stream", executor=executor)
         self.source = source
         self.resolution = resolution
 

@@ -102,7 +102,8 @@ class GlobalSceneWorker:
             try:
                 mode = self.settings.scene_input_mode
                 if mode == "image":
-                    image = frame_to_jpeg_base64(
+                    image = await asyncio.to_thread(
+                        frame_to_jpeg_base64,
                         frame.image,
                         max_side=self.settings.scene_image_max_side,
                         quality=self.settings.scene_image_jpeg_quality,
