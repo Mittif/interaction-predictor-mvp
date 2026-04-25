@@ -4,7 +4,7 @@ This folder packages the `localhost:8000` interaction-predictor output into a Qu
 
 ## What It Does
 
-- Reads `/Users/mitty/Documents/GitHub/interaction-predictor-mvp/data/first_person_analyses.jsonl`.
+- Reads `../data/first_person_analyses.jsonl` by default.
 - Watches the latest JSONL record.
 - Scores the record against configurable scene rules in `config/portal.config.json`.
 - Shows a WebXR room-scale Home stage with all configured portals open; the JSONL winner is highlighted as the recommended route.
@@ -17,7 +17,7 @@ This folder packages the `localhost:8000` interaction-predictor output into a Qu
 ## Start
 
 ```bash
-cd /Users/mitty/Documents/GitHub/interaction-predictor-mvp/quest-portal-package
+cd quest-portal-package
 ./start.sh
 ```
 
@@ -38,7 +38,7 @@ Quest WebXR may require a secure context on LAN. `start.sh` creates a local self
 ## Stop / Restart
 
 ```bash
-cd /Users/mitty/Documents/GitHub/interaction-predictor-mvp/quest-portal-package
+cd quest-portal-package
 ./stop.sh
 ./start.sh
 ```

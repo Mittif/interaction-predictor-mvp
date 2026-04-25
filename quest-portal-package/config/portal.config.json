@@ -1,6 +1,6 @@
 {
   "name": "Quest Portal Hub",
-  "inputFile": "/Users/mitty/Documents/GitHub/interaction-predictor-mvp/data/first_person_analyses.jsonl",
+  "inputFile": "../data/first_person_analyses.jsonl",
   "predictorHealthUrl": "http://localhost:8000/health",
   "pollMs": 1500,
   "fallbackSceneId": "cinema",

@@ -151,8 +151,10 @@ LLM_PROVIDER=kimi
 KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MODEL=kimi-k2.6
 KIMI_VISION_MODEL=kimi-k2.5
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3.5:27b
 
-CAMERA_URL=rtmp://Mittys-MacBook-Pro.local:1935/live/index
+CAMERA_URL=/tmp/interaction-predictor-demo/demo.mp4
 CAMERA_DEMO_VIDEO=/tmp/interaction-predictor-demo/demo.mp4
 CAMERA_PROBE_COUNT=6
 CAMERA_FPS_LIMIT=30
@@ -181,16 +183,16 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e .
 export MOONSHOT_API_KEY="你的 Kimi API Key"
-python -m interaction_predictor --camera-url rtmp://Mittys-MacBook-Pro.local:1935/live/index
+python -m interaction_predictor --camera-url rtmp://example.com/live/stream
 ```
 
 回退到本地 Ollama：
 
 ```bash
 LLM_PROVIDER=ollama \
-OLLAMA_BASE_URL=http://office.zhoudians.com:41434 \
+OLLAMA_BASE_URL=http://localhost:11434 \
 OLLAMA_MODEL=qwen3.5:27b \
-python -m interaction_predictor --camera-url rtmp://Mittys-MacBook-Pro.local:1935/live/index
+python -m interaction_predictor --camera-url rtmp://example.com/live/stream
 ```
 
 ## 摄像头输入源
@@ -201,7 +203,7 @@ python -m interaction_predictor --camera-url rtmp://Mittys-MacBook-Pro.local:193
 本机摄像头 index：0、1、2...
 macOS AVFoundation：avfoundation:0、avfoundation:1...
 浏览器摄像头：前端里选择“浏览器摄像头授权/检测”后出现
-HLS/HTTP/RTSP/RTMP：http://example/live/index.m3u8、rtmp://example/live/stream、rtmps://example/live/stream
+HLS/HTTP/RTSP/RTMP：http://example.com/live/index.m3u8、rtmp://example.com/live/stream、rtmps://example.com/live/stream
 本机测试视频：/tmp/interaction-predictor-demo/demo.mp4
 ```
 
@@ -210,11 +212,11 @@ HLS/HTTP/RTSP/RTMP：http://example/live/index.m3u8、rtmp://example/live/stream
 HLS/RTMP/RTMPS 源也可以通过环境变量或 API 设置：
 
 ```bash
-CAMERA_URL=rtmp://Mittys-MacBook-Pro.local:1935/live/index python -m interaction_predictor
+CAMERA_URL=rtmp://example.com/live/stream python -m interaction_predictor
 ```
 
 ```text
-POST /camera/source {"source":"rtmp://Mittys-MacBook-Pro.local:1935/live/index"}
+POST /camera/source {"source":"rtmp://example.com/live/stream"}
 ```
 
 检测到 HLS/HTTP/RTSP/RTMP/RTMPS 输入时，后端会优先使用本机 `ffmpeg` 拉流，把视频帧先写入预览缓冲，再按分析限流和缩放规则写入分析缓冲；未安装 `ffmpeg` 时会回退到 OpenCV 的 `VideoCapture`。如果请求了分辨率，ffmpeg 网络流链路会在输出帧前执行 `scale`，例如页面选择 `640 x 480` 时，16:9 直播流通常会输出 `640 x 360` 的预览帧和分析候选帧，从源头减少后续解码、复制和 YOLO 推理成本。
@@ -258,7 +260,7 @@ GET /health
 GET /camera/sources
 GET /camera/source
 POST /camera/source {"source":"0","width":1280,"height":720}
-POST /camera/source {"source":"rtmp://Mittys-MacBook-Pro.local:1935/live/index"}
+POST /camera/source {"source":"rtmp://example.com/live/stream"}
 GET /camera/resolution
 POST /camera/resolution {"width":1280,"height":720}
 POST /camera/browser-frame

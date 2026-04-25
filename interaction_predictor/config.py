@@ -41,7 +41,7 @@ def normalize_base_url(base_url: str, *, default_scheme: str = "http") -> str:
 
 @dataclass(slots=True)
 class Settings:
-    camera_url: str = "rtmp://Mittys-MacBook-Pro.local:1935/live/index"
+    camera_url: str = "/tmp/interaction-predictor-demo/demo.mp4"
     camera_fps_limit: float = 30.0
     camera_reconnect_sec: float = 2.0
     camera_probe_count: int = 6
@@ -60,7 +60,7 @@ class Settings:
     kimi_vision_model: str | None = "kimi-k2.5"
     kimi_api_key: str | None = None
 
-    ollama_base_url: str = "http://office.zhoudians.com:41434"
+    ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen3.5:27b"
     ollama_vision_model: str | None = None
     ollama_timeout_sec: float = 120.0

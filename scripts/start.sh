@@ -13,7 +13,7 @@ fi
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 VENV_DIR="${VENV_DIR:-.venv}"
-CAMERA_URL="${CAMERA_URL:-rtmp://Mittys-MacBook-Pro.local:1935/live/index}"
+CAMERA_URL="${CAMERA_URL:-/tmp/interaction-predictor-demo/demo.mp4}"
 API_HOST="${API_HOST:-0.0.0.0}"
 API_PORT="${API_PORT:-8000}"
 LLM_PROVIDER="${LLM_PROVIDER:-kimi}"
